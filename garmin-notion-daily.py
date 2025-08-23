@@ -14,6 +14,28 @@ from notion_client import Client
 from garminconnect import Garmin
 import garth
 
+from zoneinfo import ZoneInfo
+
+# -----------------------------
+# Timezone config
+# -----------------------------
+def get_local_tz():
+    """Return a ZoneInfo timezone to use for 'local' computations.
+    Priority: LOCAL_TZ > TIMEZONE > TZ env > system local tz.
+    """
+    tzname = os.getenv("LOCAL_TZ") or os.getenv("TIMEZONE") or os.getenv("TZ")
+    if tzname:
+        try:
+            return ZoneInfo(tzname)
+        except Exception:
+            pass
+    # Fallback to system local timezone
+    try:
+        return datetime.now().astimezone().tzinfo
+    except Exception:
+        return timezone.utc
+
+
 # -----------------------------
 # Helpers
 # -----------------------------
@@ -22,7 +44,8 @@ def iso_date(d: date) -> str:
     return d.isoformat()
 
 def today_local() -> date:
-    return date.today()
+    tz = get_local_tz()
+    return datetime.now(tz).date()
 
 def daterange(start: date, end_exclusive: date):
     d = start
@@ -35,9 +58,10 @@ def ms_to_local_iso(ms: int | None) -> str | None:
         return None
     try:
         dt_utc = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
-        dt_local = dt_utc.astimezone()  # system local tz
+        tz = get_local_tz()
+        dt_local = dt_utc.astimezone(tz)
         dt_local = dt_local.replace(second=0, microsecond=0)
-        return dt_local.isoformat()  # 'YYYY-MM-DDTHH:MM:SS±HH:MM'
+        return dt_local.isoformat()
     except Exception:
         return None
 
@@ -723,6 +747,11 @@ def map_hrv_last_n(n_days=50):
 
 def main():
     load_dotenv()
+
+    # Log timezone and 'today' per that tz
+    tz = get_local_tz()
+    print(f"[tz] Using timezone: {tz}")
+    print(f"[tz] Today in tz: {datetime.now(tz).date()}")
 
     notion_token = os.getenv("NOTION_TOKEN")
     database_id = (os.getenv("NOTION_DB_ID") or "").strip() or None
