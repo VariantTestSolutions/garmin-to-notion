@@ -1,10 +1,9 @@
-
 name: Garmin → Notion (every 15 min)
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
-  workflow_dispatch:
+    - cron: "*/15 * * * *"   # runs on default branch only
+  workflow_dispatch:          # lets you test it manually
 
 permissions:
   contents: read
@@ -12,7 +11,6 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,18 +20,22 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Restore Garmin token cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.garmin_tokens
-          key: garmin-tokens
-          restore-keys: |
-            garmin-tokens-
+      # ⬇️ Recreate Garmin token store from secrets (Option A)
+      - name: Recreate Garmin token store
+        env:
+          GARMIN_OAUTH1_JSON: ${{ secrets.GARMIN_OAUTH1_JSON }}
+          GARMIN_OAUTH2_JSON: ${{ secrets.GARMIN_OAUTH2_JSON }}
+        run: |
+          mkdir -p /home/runner/.garmin_tokens
+          printf '%s' "$GARMIN_OAUTH1_JSON" > /home/runner/.garmin_tokens/oauth1_token
+          printf '%s' "$GARMIN_OAUTH2_JSON" > /home/runner/.garmin_tokens/oauth2_token
+          chmod 700 /home/runner/.garmin_tokens
+          chmod 600 /home/runner/.garmin_tokens/oauth1_token /home/runner/.garmin_tokens/oauth2_token
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install python-dotenv notion-client garminconnect garth
 
       - name: Run sync
         env:
@@ -42,14 +44,16 @@ jobs:
           NOTION_PARENT_PAGE_ID: ${{ secrets.NOTION_PARENT_PAGE_ID }}
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
-          GARMIN_TOKEN_STORE: ${{ secrets.GARMIN_TOKEN_STORE }}
-          GARMIN_MFA_CODE: ${{ secrets.GARMIN_MFA_CODE }}
+          GARMIN_TOKEN_STORE: /home/runner/.garmin_tokens
+          OVERWRITE_ALL: "1"
+          WINDOW_DAYS: "1"          # narrow during testing; bump to 5 later
+          INCLUDE_TODAY: "1"
         run: |
-          python garmin_notion_daily.py
+          python garmin-notion-daily.py
 
       - name: Save Garmin token cache
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: ~/.garmin_tokens
+          path: /home/runner/.garmin_tokens
           key: garmin-tokens-${{ github.run_id }}
