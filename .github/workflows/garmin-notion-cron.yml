@@ -27,10 +27,10 @@ jobs:
           GARMIN_OAUTH2_JSON: ${{ secrets.GARMIN_OAUTH2_JSON }}
         run: |
           mkdir -p /home/runner/.garmin_tokens
-          printf '%s' "$GARMIN_OAUTH1_JSON" > /home/runner/.garmin_tokens/oauth1_token
-          printf '%s' "$GARMIN_OAUTH2_JSON" > /home/runner/.garmin_tokens/oauth2_token
+          printf '%s' "$GARMIN_OAUTH1_JSON" > /home/runner/.garmin_tokens/oauth1_token.json
+          printf '%s' "$GARMIN_OAUTH2_JSON" > /home/runner/.garmin_tokens/oauth2_token.json
           chmod 700 /home/runner/.garmin_tokens
-          chmod 600 /home/runner/.garmin_tokens/oauth1_token /home/runner/.garmin_tokens/oauth2_token
+          chmod 600 /home/runner/.garmin_tokens/oauth1_token.json /home/runner/.garmin_tokens/oauth2_token.json
 
       - name: Install dependencies
         run: |
