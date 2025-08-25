@@ -2,7 +2,10 @@ name: Garmin → Notion (every 15 min)
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # runs on default branch only
+    - cron: "30-59/10 5 * * *"   # runs on default branch only
+    - cron: "*/10 6-7 * * *"
+    - cron: "0 8-23 * * *"
+
   workflow_dispatch:          # lets you test it manually
 
 permissions:
