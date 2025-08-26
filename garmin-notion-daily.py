@@ -768,8 +768,8 @@ def main():
     notion = Client(auth=notion_token)
     dbid = ensure_database(notion, database_id, parent_page_id)
 
-    intensity_map = map_intensity_last_n(5)
-    hrv_map = map_hrv_last_n(5)
+    intensity_map = map_intensity_last_n(window_days)
+    hrv_map = map_hrv_last_n(window_days)
 
     activities = fetch_activities_bulk(g, start_d)
     act_by_date = aggregate_activities_by_date(activities)
