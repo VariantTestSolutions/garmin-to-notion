@@ -51,7 +51,7 @@ jobs:
           GARMIN_TOKEN_STORE: /home/runner/.garmin_tokens
           LOCAL_TZ: America/Los_Angeles   # ⬅️ set your “local” day here
           OVERWRITE_ALL: "1"
-          WINDOW_DAYS: "10"          # narrow during testing; bump to 5 later
+          WINDOW_DAYS: "16"          # narrow during testing; bump to 5 later
           INCLUDE_TODAY: "1"
         run: |
           python garmin-notion-daily.py

@@ -1,9 +1,9 @@
 """
-Garmin → Notion Daily Rollup — v3.7.5
+Garmin → Notion Daily Rollup — v3.7.6
 
-Changes from v3.7.4:
-• Fix: **Activities were bucketed by GMT**. Now use **startTimeLocal** first for day assignment & filtering.
-• Adds a log when today's activities are found/aggregated.
+Changes from v3.7.5:
+• Preserve historical HRV and Intensity fields: don't clear them when missing on a run.
+• Only write HRV/Intensity when values are present.
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -347,6 +347,13 @@ def _empty_for_type(ptype: str):
         "status": None,
     }.get(ptype, None)
 
+PRESERVE_IF_MISSING = {
+    "HRV",
+    "Intensity Minutes",
+    "Intensity Moderate (min)",
+    "Intensity Vigorous (min)",
+}
+
 def _build_full_properties(db_types: dict, props: dict, d_iso: str, title_name: str | None, preferred_date_names: list[str]) -> dict:
     """Return a properties dict that sets *all* writable properties.
     Missing values are explicitly cleared, so the page is effectively overwritten.
@@ -383,7 +390,9 @@ def _build_full_properties(db_types: dict, props: dict, d_iso: str, title_name: 
         if key in props:
             properties[key] = as_prop_for_type(ptype, props[key])
         else:
-            # Clear missing fields when overwriting
+            # Clear missing fields when overwriting, except selected fields we preserve
+            if key in PRESERVE_IF_MISSING:
+                continue
             properties[key] = as_prop_for_type(ptype, _empty_for_type(ptype))
 
     return properties
@@ -878,6 +887,11 @@ def main():
             P["has_weight"]: weight_lb is not None
         }
 
+
+        # Preserve historical HRV/Intensity fields: only write them when we have values
+        for _k in (P["IntensityMin"], P["IntensityMod"], P["IntensityVig"], P["HRV"]):
+            if props.get(_k) is None:
+                props.pop(_k, None)
         upsert_row(notion, dbid, d_iso, props)
         created_or_updated += 1
         time.sleep(0.05)
