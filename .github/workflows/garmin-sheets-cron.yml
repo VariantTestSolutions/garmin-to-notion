@@ -28,6 +28,7 @@ jobs:
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          GARMIN_TOKEN_STORE: /home/runner/.garmin_tokens
           GARMIN_MFA_CODE: ${{ secrets.GARMIN_MFA_CODE }}
           LOCAL_TZ: America/Los_Angeles
 
@@ -38,7 +39,15 @@ jobs:
           GOOGLE_SHEETS_SPREADSHEET_ID: ${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}
           GOOGLE_SHEETS_WORKSHEET_TITLE: Garmin Daily
 
-          WINDOW_DAYS: "5"
+          WINDOW_DAYS: "30"
           INCLUDE_TODAY: "1"
         run: |
           python garmin-sheets-daily.py
+
+      - name: Save Garmin token cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: /home/runner/.garmin_tokens
+          key: garmin-tokens-${{ github.run_id }}
+
