@@ -1,13 +1,12 @@
 
 """
-Garmin → Google Sheets Daily Rollup — v4.0.1 (Sheets edition, CI token fixes)
+Garmin → Google Sheets Daily Rollup — v4.0.0 (Sheets edition)
 
-Changes in 4.0.1:
-- GARMIN_TOKEN_STORE must point to a DIRECTORY (as garth expects).
-- Optional: GARMIN_TOKEN_STORE_TGZ_B64 can contain a base64-encoded .tar.gz
-  of your token-store directory (created locally after MFA login). The script
-  will extract it into GARMIN_TOKEN_STORE if the directory is missing/empty.
-- Login flow now tries garth.resume() FIRST, then validates with Garmin.login().
+This script is adapted from your Notion writer to write rows to a Google Sheet instead.
+• Auth: Google Service Account (either a JSON file path or inline JSON via env var)
+• Target: A worksheet inside a Spreadsheet (by ID). The worksheet is created if missing.
+• Upsert behavior: one row per ISO date (YYYY-MM-DD), matched on the "date_key" column.
+• Window: defaults to last 5 days including today; override with WINDOW_DAYS and INCLUDE_TODAY=0/1.
 
 Required env:
   GARMIN_EMAIL, GARMIN_PASSWORD
@@ -15,17 +14,18 @@ Required env:
   (one of) GOOGLE_SERVICE_ACCOUNT_FILE or GOOGLE_SERVICE_ACCOUNT_JSON
 
 Optional env:
-  LOCAL_TZ / TIMEZONE / TZ
-  GOOGLE_SHEETS_WORKSHEET_TITLE (default "Garmin Daily")
+  LOCAL_TZ / TIMEZONE / TZ          -> sets local time zone used for sleep start/end + "today"
+  GOOGLE_SHEETS_WORKSHEET_TITLE     -> defaults to "Garmin Daily"
   WINDOW_DAYS (default 5)
   INCLUDE_TODAY (default 1)
-  GARMIN_TOKEN_STORE (default ~/.garmin_tokens)
-  GARMIN_TOKEN_STORE_TGZ_B64 (optional, base64 .tar.gz of token dir)
+
+Dependencies:
+  pip install garth garminconnect python-dotenv gspread google-auth
 """
 
 from datetime import date, datetime, timedelta, timezone
 from collections import defaultdict, Counter
-import os, sys, time, calendar, re, json, base64, tarfile, io
+import os, sys, time, calendar, re, json
 from dotenv import load_dotenv
 from garminconnect import Garmin
 import garth
@@ -103,87 +103,51 @@ def _first_present(dct, keys, default=None):
     return default
 
 # -----------------------------
-# Garmin login (CI-safe)
+# Garmin login
 # -----------------------------
-def _ensure_dir(path: str):
-    os.makedirs(path, exist_ok=True)
-
-def _maybe_restore_token_dir_from_tgz(token_dir: str):
-    """
-    If GARMIN_TOKEN_STORE_TGZ_B64 is provided and token_dir is missing/empty,
-    decode and extract it into token_dir.
-    """
-    b64 = os.getenv("GARMIN_TOKEN_STORE_TGZ_B64")
-    if not b64:
-        return
-    needs_restore = (not os.path.exists(token_dir)) or (os.path.isdir(token_dir) and not os.listdir(token_dir))
-    if not needs_restore:
-        return
-    try:
-        _ensure_dir(token_dir)
-        data = base64.b64decode(b64)
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
-            tar.extractall(token_dir)
-        print(f"[garmin] Restored token-store from GARMIN_TOKEN_STORE_TGZ_B64 into {token_dir}")
-    except Exception as e:
-        print(f"[garmin] Failed to restore token-store from GARMIN_TOKEN_STORE_TGZ_B64: {e}")
-
 def login_to_garmin():
     garmin_email = os.getenv("GARMIN_EMAIL")
     garmin_password = os.getenv("GARMIN_PASSWORD")
     token_store = os.getenv("GARMIN_TOKEN_STORE", "~/.garmin_tokens")
-    token_store = os.path.expanduser(token_store).rstrip("/")
+    token_store = os.path.expanduser(token_store)
     mfa_code = os.getenv("GARMIN_MFA_CODE")
 
     if not garmin_email or not garmin_password:
         print("Missing GARMIN_EMAIL or GARMIN_PASSWORD")
         sys.exit(1)
 
-    # Token store must be a DIRECTORY (garth expects a dir, not a single JSON file).
-    if os.path.exists(token_store) and not os.path.isdir(token_store):
-        print(f"[garmin] GARMIN_TOKEN_STORE points to a file: {token_store}. Expected a directory.")
-        print("[garmin] Fix: set GARMIN_TOKEN_STORE to a directory path and store/resume tokens there.")
-        sys.exit(1)
-
-    # Optional: restore a token-store directory from a base64 .tar.gz secret
-    _maybe_restore_token_dir_from_tgz(token_store)
-
     g = Garmin(garmin_email, garmin_password)
     try:
-        # Prefer resuming existing tokens first (avoids refresh without OAuth1)
-        try:
-            if os.path.isdir(token_store) and os.listdir(token_store):
-                garth.resume(token_store)
-                print(f"[garmin] Resumed tokens from {token_store}")
-            else:
-                raise RuntimeError("Token dir missing or empty")
-        except Exception as resume_err:
-            print(f"[garmin] No usable tokens to resume: {resume_err}")
-            # Fresh login path (MFA supported if provided)
+        if os.path.exists(token_store):
+            print(f"[garmin] Using stored tokens: {token_store}")
+            g.login(tokenstore=token_store)
+        else:
             if mfa_code:
-                print("[garmin] Performing non-interactive MFA login")
+                print("[garmin] Non-interactive MFA login")
                 client_state, _ = g.login(return_on_mfa=True)
                 if client_state == "needs_mfa":
                     g.resume_login(client_state, mfa_code)
             else:
                 g.login()
 
-            _ensure_dir(token_store)
             if hasattr(g, "garth") and g.garth:
+                os.makedirs(os.path.dirname(token_store), exist_ok=True)
                 g.garth.save(token_store)
+                print(f"[garmin] Saved tokens to {token_store}")
+
+        try:
+            garth.resume(token_store)
+        except Exception:
+            garth.login(garmin_email, garmin_password)
             garth.save(token_store)
-            print(f"[garmin] Saved new tokens to {token_store}")
 
-        # Validate session / refresh as needed, now that tokens are present
-        g.login(tokenstore=token_store)
         return g, token_store
-
     except Exception as e:
         print(f"[garmin] Login error: {e}")
         sys.exit(1)
 
 # -----------------------------
-# Column map (matches your Notion schema)
+# Column map (same logical fields as the Notion version)
 # -----------------------------
 P = {
     "Date": "Date",
@@ -238,6 +202,7 @@ P = {
     "month": "month"
 }
 
+# Canonical header order for the sheet
 SHEET_HEADERS = [
     P["date_key"], P["Date"], P["weekday"], P["iso_week"], P["year"], P["month"],
     P["ActivityCount"], P["ActivityDistanceMi"], P["ActivityDurationMin"], P["ActivityCalories"],
@@ -294,6 +259,7 @@ def _open_or_create_worksheet(gc, spreadsheet_id: str, title: str):
     except Exception:
         existing = []
     if existing != SHEET_HEADERS:
+        # Rebuild first row as canonical headers; expand columns if necessary
         if ws.col_count < len(SHEET_HEADERS):
             ws.add_cols(len(SHEET_HEADERS) - ws.col_count)
         ws.update(range_name=f"A1:{gspread.utils.rowcol_to_a1(1, len(SHEET_HEADERS))}",
@@ -313,8 +279,25 @@ def _read_date_index(ws):
             idx[v] = i
     return idx
 
+def _row_from_props(d_iso: str, props: dict):
+    # Compose a row list aligned with SHEET_HEADERS
+    values = []
+    for h in SHEET_HEADERS:
+        if h == P["date_key"]:
+            values.append(d_iso)
+        elif h == P["Date"]:
+            values.append(d_iso)
+        else:
+            values.append(props.get(h, ""))
+    return values
+
+def upsert_row_sheets(ws, d_iso: str, props: dict):
+    # Build index once per run outside this for loop for performance; but simple enough here
+    # In main(), we prefetch the index once.
+    pass
+
 # -----------------------------
-# Garmin data fetchers (unchanged)
+# Garmin data fetchers (same logic as your Notion script)
 # -----------------------------
 def fetch_steps_for_date(g: Garmin, d: date):
     try:
@@ -329,6 +312,10 @@ def fetch_steps_for_date(g: Garmin, d: date):
         return None, None, None
 
 def _format_score_value(source: dict, key_src: str):
+    """
+    Return 'value(qualifier_key)' with NO 'metric=' prefix.
+    Examples: 'None(EXCELLENT)', '22(moderate)'
+    """
     if not isinstance(source, dict):
         return None
     item = source.get(key_src) or {}
@@ -360,6 +347,7 @@ def _sleep_scores_from(data: dict) -> dict:
     scores["rem_percentage_fmt"] = _format_score_value(source, "remPercentage")
     scores["light_percentage_fmt"] = _format_score_value(source, "lightPercentage")
     scores["deep_percentage_fmt"] = _format_score_value(source, "deepPercentage")
+    # Alt keys safety
     if scores["light_percentage_fmt"] is None:
         scores["light_percentage_fmt"] = _format_score_value(source, "light_percentage")
     if scores["deep_percentage_fmt"] is None:
@@ -387,8 +375,8 @@ def fetch_sleep_for_date(g: Garmin, d: date):
             "rem_h":  round((daily.get("remSleepSeconds") or 0) / 3600, 2),
             "awake_h":round((daily.get("awakeSleepSeconds") or 0) / 3600, 2),
             "resting_hr": data.get("restingHeartRate") or daily.get("restingHeartRate"),
-            "start_local": ms_to_local_iso(start_ms),
-            "end_local": ms_to_local_iso(end_ms),
+            "start_local": start_local_iso,
+            "end_local": end_local_iso,
             "scores": scores,
         }
     except Exception:
@@ -491,6 +479,7 @@ def map_hrv_last_n(n_days=50):
 def main():
     load_dotenv()
 
+    # Log timezone and 'today' per that tz
     tz = get_local_tz()
     print(f"[tz] Using timezone: {tz}")
     print(f"[tz] Today in tz: {datetime.now(tz).date()}")
@@ -624,25 +613,26 @@ def main():
             P["has_weight"]: weight_lb is not None
         }
 
+        # Preserve historical HRV/Intensity fields: only write them when we have values
         for _k in (P["IntensityMin"], P["IntensityMod"], P["IntensityVig"], P["HRV"]):
             if props.get(_k) is None:
                 props.pop(_k, None)
 
-        # Upsert by date_key
+        # Upsert into Google Sheet by date_key
         row_values = [props.get(h, "") if h not in (P["date_key"], P["Date"]) else d_iso for h in SHEET_HEADERS]
-
-        # Build date_index lazily here (we'd normally do it once; kept simple)
-        if 'date_index' not in globals():
-            globals()['date_index'] = _read_date_index(ws)
-
         if d_iso in date_index:
+            # Update row in place
             row_num = date_index[d_iso]
             rng = f"A{row_num}:{gspread.utils.rowcol_to_a1(row_num, len(SHEET_HEADERS)).replace(str(row_num)+'$', str(row_num))}"
             ws.update(range_name=rng, values=[row_values], value_input_option="RAW")
             updates += 1
         else:
             ws.append_row(row_values, value_input_option="RAW")
+            # Update index (new row is at the bottom)
             try:
+                last_row = ws.row_count
+                # But row_count can exceed actual data. Safer to read the last filled row number:
+                # Use len of col A values
                 last = len(ws.col_values(1))
                 date_index[d_iso] = last
             except Exception:
