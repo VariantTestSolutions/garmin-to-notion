@@ -54,6 +54,6 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_FILE: ${{ runner.temp }}/sa.json
           GOOGLE_SHEETS_SPREADSHEET_ID: ${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}
           GOOGLE_SHEETS_WORKSHEET_TITLE: ${{ secrets.GOOGLE_SHEETS_WORKSHEET_TITLE }}
-          WINDOW_DAYS: "60"
+          WINDOW_DAYS: "7"
           INCLUDE_TODAY: "1"
         run: python garmin-sheets-daily.py
