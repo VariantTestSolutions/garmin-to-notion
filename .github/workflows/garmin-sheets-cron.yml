@@ -1,0 +1,54 @@
+name: garmin-sheets-cron
+
+on:
+  schedule:
+    - cron: "0 * * * *"  # hourly
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install garth garminconnect python-dotenv gspread google-auth
+
+      # Optional: restore the Garmin token-store directory from a secret.
+      - name: Restore Garmin token-store directory
+        if: ${{ secrets.GARMIN_TOKEN_STORE_TGZ_B64 != '' }}
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/garmin_tokens"
+          echo "${{ secrets.GARMIN_TOKEN_STORE_TGZ_B64 }}" | base64 -d > "$RUNNER_TEMP/garmin_tokens.tgz"
+          tar -C "$RUNNER_TEMP/garmin_tokens" -xzf "$RUNNER_TEMP/garmin_tokens.tgz"
+          echo "[ok] Token store restored"
+
+      # Write Google Service Account JSON to a file safely
+      - name: Write Google SA key to file
+        shell: bash
+        env:
+          SA_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          printf "%s" "$SA_JSON" > "$RUNNER_TEMP/sa.json"
+          python -c "import json, os; json.load(open(os.environ['RUNNER_TEMP'] + '/sa.json')); print('[ok] Service account JSON parsed')"
+
+      - name: Run Garmin to Google Sheets
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          GARMIN_TOKEN_STORE: ${{ runner.temp }}/garmin_tokens/.garmin_tokens
+          LOCAL_TZ: America/Los_Angeles
+          GOOGLE_SERVICE_ACCOUNT_FILE: ${{ runner.temp }}/sa.json
+          GOOGLE_SHEETS_SPREADSHEET_ID: ${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}
+          GOOGLE_SHEETS_WORKSHEET_TITLE: Garmin Daily
+          WINDOW_DAYS: "5"
+          INCLUDE_TODAY: "1"
+        run: python garmin-sheets-daily.py
