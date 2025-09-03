@@ -1,26 +1,7 @@
-
 """
-Garmin → Google Sheets Daily Rollup — v4.0.1 (Sheets edition, CI token fixes)
-
-Changes in 4.0.1:
-- GARMIN_TOKEN_STORE must point to a DIRECTORY (as garth expects).
-- Optional: GARMIN_TOKEN_STORE_TGZ_B64 can contain a base64-encoded .tar.gz
-  of your token-store directory (created locally after MFA login). The script
-  will extract it into GARMIN_TOKEN_STORE if the directory is missing/empty.
-- Login flow now tries garth.resume() FIRST, then validates with Garmin.login().
-
-Required env:
-  GARMIN_EMAIL, GARMIN_PASSWORD
-  GOOGLE_SHEETS_SPREADSHEET_ID
-  (one of) GOOGLE_SERVICE_ACCOUNT_FILE or GOOGLE_SERVICE_ACCOUNT_JSON
-
-Optional env:
-  LOCAL_TZ / TIMEZONE / TZ
-  GOOGLE_SHEETS_WORKSHEET_TITLE (default "Garmin Daily")
-  WINDOW_DAYS (default 5)
-  INCLUDE_TODAY (default 1)
-  GARMIN_TOKEN_STORE (default ~/.garmin_tokens)
-  GARMIN_TOKEN_STORE_TGZ_B64 (optional, base64 .tar.gz of token dir)
+Garmin → Google Sheets Daily Rollup — v4.0.2
+Change: removed columns -> date_key, iso_week, year, month, BMI, has_sleep, has_activities, has_weight, has_steps
+Indexing now uses the first column "Date" for upserts.
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -78,10 +59,6 @@ def ms_to_local_iso(ms: int | None) -> str | None:
     except Exception:
         return None
 
-def iso_week_parts(d: date):
-    iso_year, iso_week, iso_weekday = d.isocalendar()
-    return iso_year, iso_week, iso_weekday
-
 def to_tokens(value):
     if value is None:
         return []
@@ -109,10 +86,6 @@ def _ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
 
 def _maybe_restore_token_dir_from_tgz(token_dir: str):
-    """
-    If GARMIN_TOKEN_STORE_TGZ_B64 is provided and token_dir is missing/empty,
-    decode and extract it into token_dir.
-    """
     b64 = os.getenv("GARMIN_TOKEN_STORE_TGZ_B64")
     if not b64:
         return
@@ -139,18 +112,14 @@ def login_to_garmin():
         print("Missing GARMIN_EMAIL or GARMIN_PASSWORD")
         sys.exit(1)
 
-    # Token store must be a DIRECTORY (garth expects a dir, not a single JSON file).
     if os.path.exists(token_store) and not os.path.isdir(token_store):
         print(f"[garmin] GARMIN_TOKEN_STORE points to a file: {token_store}. Expected a directory.")
-        print("[garmin] Fix: set GARMIN_TOKEN_STORE to a directory path and store/resume tokens there.")
         sys.exit(1)
 
-    # Optional: restore a token-store directory from a base64 .tar.gz secret
     _maybe_restore_token_dir_from_tgz(token_store)
 
     g = Garmin(garmin_email, garmin_password)
     try:
-        # Prefer resuming existing tokens first (avoids refresh without OAuth1)
         try:
             if os.path.isdir(token_store) and os.listdir(token_store):
                 garth.resume(token_store)
@@ -159,7 +128,6 @@ def login_to_garmin():
                 raise RuntimeError("Token dir missing or empty")
         except Exception as resume_err:
             print(f"[garmin] No usable tokens to resume: {resume_err}")
-            # Fresh login path (MFA supported if provided)
             if mfa_code:
                 print("[garmin] Performing non-interactive MFA login")
                 client_state, _ = g.login(return_on_mfa=True)
@@ -167,27 +135,23 @@ def login_to_garmin():
                     g.resume_login(client_state, mfa_code)
             else:
                 g.login()
-
             _ensure_dir(token_store)
             if hasattr(g, "garth") and g.garth:
                 g.garth.save(token_store)
             garth.save(token_store)
             print(f"[garmin] Saved new tokens to {token_store}")
 
-        # Validate session / refresh as needed, now that tokens are present
         g.login(tokenstore=token_store)
         return g, token_store
-
     except Exception as e:
         print(f"[garmin] Login error: {e}")
         sys.exit(1)
 
 # -----------------------------
-# Column map (matches your Notion schema)
+# Column map
 # -----------------------------
 P = {
     "Date": "Date",
-    "date_key": "date_key",
     "ActivityCount": "Activities (#)",
     "ActivityDistanceMi": "Activity Distance (mi)",
     "ActivityDurationMin": "Activity Duration (min)",
@@ -227,19 +191,12 @@ P = {
     "IntensityVig": "Intensity Vigorous (min)",
     "HRV": "HRV",
     "WeightLb": "Weight (lb)",
-    "BMI": "BMI",
-    "has_sleep": "has_sleep",
-    "has_steps": "has_steps",
-    "has_activities": "has_activities",
-    "has_weight": "has_weight",
     "weekday": "weekday",
-    "iso_week": "iso_week",
-    "year": "year",
-    "month": "month"
 }
 
+# New header set (Date is first; removed requested fields)
 SHEET_HEADERS = [
-    P["date_key"], P["Date"], P["weekday"], P["iso_week"], P["year"], P["month"],
+    P["Date"], P["weekday"],
     P["ActivityCount"], P["ActivityDistanceMi"], P["ActivityDurationMin"], P["ActivityCalories"],
     P["ActivityNames"], P["ActivityTypes"], P["PrimarySport"], P["ActivityTypesUnique"],
     P["ActTrainingEff"], P["ActAerobicEff"], P["ActAnaerobicEff"],
@@ -250,8 +207,7 @@ SHEET_HEADERS = [
     P["SS_rem_percentage"], P["SS_restlessness"], P["SS_light_percentage"], P["SS_deep_percentage"],
     P["StressAvg"], P["StressMax"], P["BodyBatteryAvg"], P["BodyBatteryMin"],
     P["IntensityMin"], P["IntensityMod"], P["IntensityVig"], P["HRV"],
-    P["WeightLb"], P["BMI"],
-    P["has_sleep"], P["has_steps"], P["has_activities"], P["has_weight"]
+    P["WeightLb"]
 ]
 
 # -----------------------------
@@ -288,7 +244,7 @@ def _open_or_create_worksheet(gc, spreadsheet_id: str, title: str):
         ws.append_row(SHEET_HEADERS, value_input_option="RAW")
         return ws
 
-    # Ensure headers exist & in expected order (update in place if mismatched)
+    # Ensure headers exist & in expected order (and shrink extra columns)
     try:
         existing = ws.row_values(1)
     except Exception:
@@ -296,19 +252,23 @@ def _open_or_create_worksheet(gc, spreadsheet_id: str, title: str):
     if existing != SHEET_HEADERS:
         if ws.col_count < len(SHEET_HEADERS):
             ws.add_cols(len(SHEET_HEADERS) - ws.col_count)
+        elif ws.col_count > len(SHEET_HEADERS):
+            try:
+                ws.resize(cols=len(SHEET_HEADERS))
+            except Exception:
+                pass
         ws.update(range_name=f"A1:{gspread.utils.rowcol_to_a1(1, len(SHEET_HEADERS))}",
                   values=[SHEET_HEADERS])
     return ws
 
 def _read_date_index(ws):
-    # Build an index {date_key -> row_number}
-    # Assumes headers are in row 1 and date_key is column 1
+    # Build an index {Date -> row_number}, Date is column 1 and stores ISO yyyy-mm-dd
     try:
-        col = ws.col_values(1)  # 1-based; includes header
+        col = ws.col_values(1)  # includes header
     except Exception:
         col = []
     idx = {}
-    for i, v in enumerate(col[1:], start=2):  # skip header; rows start at 2
+    for i, v in enumerate(col[1:], start=2):  # skip header
         if v:
             idx[v] = i
     return idx
@@ -387,8 +347,8 @@ def fetch_sleep_for_date(g: Garmin, d: date):
             "rem_h":  round((daily.get("remSleepSeconds") or 0) / 3600, 2),
             "awake_h":round((daily.get("awakeSleepSeconds") or 0) / 3600, 2),
             "resting_hr": data.get("restingHeartRate") or daily.get("restingHeartRate"),
-            "start_local": ms_to_local_iso(start_ms),
-            "end_local": ms_to_local_iso(end_ms),
+            "start_local": start_local_iso,
+            "end_local": end_local_iso,
             "scores": scores,
         }
     except Exception:
@@ -443,7 +403,6 @@ def aggregate_activities_by_date(activities):
         v["dur_min"] = round(v["dur_min"], 2)
         v["cal"] = round(v["cal"], 0)
 
-        from collections import Counter
         type_counts = Counter(v["types"])
         primary = type_counts.most_common(1)[0][0] if type_counts else ""
         unique_types = " ".join(sorted(set(v["types"])))
@@ -510,7 +469,7 @@ def main():
     # Prepare Google Sheets
     gc = _gspread_client()
     ws = _open_or_create_worksheet(gc, spreadsheet_id, worksheet_title)
-    date_index = _read_date_index(ws)  # {date_key -> row}
+    date_index = _read_date_index(ws)  # {Date (ISO) -> row}
 
     intensity_map = map_intensity_last_n(window_days)
     hrv_map = map_hrv_last_n(window_days)
@@ -523,7 +482,6 @@ def main():
 
     for d in daterange(start_d, end_d_inclusive + timedelta(days=1)):
         d_iso = iso_date(d)
-        iso_y, iso_w, _ = iso_week_parts(d)
 
         steps, step_goal, walk_mi = fetch_steps_for_date(g, d)
         sleep = fetch_sleep_for_date(g, d) or {}
@@ -548,7 +506,7 @@ def main():
 
         hrv = hrv_map.get(d_iso)
 
-        weight_lb = bmi = None
+        weight_lb = None
         try:
             w = garth.WeightData.get(d_iso)
             if w:
@@ -556,7 +514,6 @@ def main():
                 if grams is not None:
                     kg = grams / 1000.0
                     weight_lb = round(kg * 2.2046226218, 2)
-                bmi = getattr(w, "bmi", None)
         except Exception:
             pass
 
@@ -567,11 +524,8 @@ def main():
         })
 
         props = {
-            P["date_key"]: d_iso,
+            P["Date"]: d_iso,
             P["weekday"]: calendar.day_name[d.weekday()],
-            P["iso_week"]: iso_w,
-            P["year"]: d.year,
-            P["month"]: d.month,
 
             P["ActivityCount"]: act["count"],
             P["ActivityDistanceMi"]: act["dist_mi"],
@@ -616,28 +570,19 @@ def main():
             P["HRV"]: hrv,
 
             P["WeightLb"]: weight_lb,
-            P["BMI"]: bmi,
-
-            P["has_sleep"]: bool(sleep),
-            P["has_steps"]: steps is not None,
-            P["has_activities"]: act["count"] > 0,
-            P["has_weight"]: weight_lb is not None
         }
 
+        # Only write these if present (to preserve historical values)
         for _k in (P["IntensityMin"], P["IntensityMod"], P["IntensityVig"], P["HRV"]):
             if props.get(_k) is None:
                 props.pop(_k, None)
 
-        # Upsert by date_key
-        row_values = [props.get(h, "") if h not in (P["date_key"], P["Date"]) else d_iso for h in SHEET_HEADERS]
-
-        # Build date_index lazily here (we'd normally do it once; kept simple)
-        if 'date_index' not in globals():
-            globals()['date_index'] = _read_date_index(ws)
+        # Upsert by Date (first column)
+        row_values = [props.get(h, "") for h in SHEET_HEADERS]
 
         if d_iso in date_index:
             row_num = date_index[d_iso]
-            rng = f"A{row_num}:{gspread.utils.rowcol_to_a1(row_num, len(SHEET_HEADERS)).replace(str(row_num)+'$', str(row_num))}"
+            rng = f"A{row_num}:{gspread.utils.rowcol_to_a1(row_num, len(SHEET_HEADERS))}"
             ws.update(range_name=rng, values=[row_values], value_input_option="RAW")
             updates += 1
         else:
