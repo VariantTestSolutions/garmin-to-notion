@@ -23,13 +23,18 @@ jobs:
 
       # Optional: restore the Garmin token-store directory from a secret.
       - name: Restore Garmin token-store directory
-        if: ${{ secrets.GARMIN_TOKEN_STORE_TGZ_B64 != '' }}
         shell: bash
+        env:
+          TOK_B64: ${{ secrets.GARMIN_TOKEN_STORE_TGZ_B64 }}
         run: |
-          mkdir -p "$RUNNER_TEMP/garmin_tokens"
-          echo "${{ secrets.GARMIN_TOKEN_STORE_TGZ_B64 }}" | base64 -d > "$RUNNER_TEMP/garmin_tokens.tgz"
-          tar -C "$RUNNER_TEMP/garmin_tokens" -xzf "$RUNNER_TEMP/garmin_tokens.tgz"
-          echo "[ok] Token store restored"
+          if [ -n "$TOK_B64" ]; then
+            mkdir -p "$RUNNER_TEMP/garmin_tokens"
+            echo "$TOK_B64" | base64 -d > "$RUNNER_TEMP/garmin_tokens.tgz"
+            tar -C "$RUNNER_TEMP/garmin_tokens" -xzf "$RUNNER_TEMP/garmin_tokens.tgz"
+            echo "[ok] Token store restored"
+          else
+            echo "[skip] GARMIN_TOKEN_STORE_TGZ_B64 not set; continuing"
+          fi
 
       # Write Google Service Account JSON to a file safely
       - name: Write Google SA key to file
