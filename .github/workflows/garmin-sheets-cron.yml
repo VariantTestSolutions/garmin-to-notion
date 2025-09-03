@@ -26,26 +26,53 @@ jobs:
           pip install garth garminconnect python-dotenv gspread google-auth
 
       # Optional: restore the Garmin token-store directory from a secret.
-      # See garmin-tokenstore-gha-snippet.yml for how to generate the secret.
+      # Create GARMIN_TOKEN_STORE_TGZ_B64 as the base64 of a .tgz containing ~/.garmin_tokens
       - name: Restore Garmin token-store directory
-        if: ${{ secrets.GARMIN_TOKEN_STORE_TGZ_B64 != '' }}
+        shell: bash
+        env:
+          TOK_B64: ${{ secrets.GARMIN_TOKEN_STORE_TGZ_B64 }}
+        run: |
+          if [ -n "$TOK_B64" ]; then
+            mkdir -p "$RUNNER_TEMP/garmin_tokens"
+            echo "$TOK_B64" | base64 -d > "$RUNNER_TEMP/garmin_tokens.tgz"
+            tar -C "$RUNNER_TEMP/garmin_tokens" -xzf "$RUNNER_TEMP/garmin_tokens.tgz"
+            echo "[ok] Token store restored"
+          else
+            echo "[skip] GARMIN_TOKEN_STORE_TGZ_B64 not set; continuing"
+          fi
+
+      # Write Google Service Account JSON to a file to avoid inline JSON parsing issues
+      - name: Write Google SA key to file
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/garmin_tokens"
-          echo "${{ secrets.GARMIN_TOKEN_STORE_TGZ_B64 }}" | base64 -d > "$RUNNER_TEMP/garmin_tokens.tgz"
-          tar -C "$RUNNER_TEMP/garmin_tokens" -xzf "$RUNNER_TEMP/garmin_tokens.tgz"
+          # Safe heredoc preserves exact JSON formatting
+          cat > "$RUNNER_TEMP/sa.json" <<'JSON'
+${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+JSON
+          # Sanity check (does not print secrets)
+          python - <<'PY'
+import json, os
+p = os.environ["RUNNER_TEMP"] + "/sa.json"
+json.load(open(p))
+print("[ok] Service account JSON parsed")
+PY
 
       - name: Run Garmin to Google Sheets
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+
+          # If the token dir was restored above, this path will exist:
           GARMIN_TOKEN_STORE: ${{ runner.temp }}/garmin_tokens/.garmin_tokens
+
           LOCAL_TZ: America/Los_Angeles
 
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          # Use the file we just wrote:
+          GOOGLE_SERVICE_ACCOUNT_FILE: ${{ runner.temp }}/sa.json
+          # Do NOT pass inline JSON here.
+
           GOOGLE_SHEETS_SPREADSHEET_ID: ${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}
           GOOGLE_SHEETS_WORKSHEET_TITLE: Garmin Daily
-
           WINDOW_DAYS: "5"
           INCLUDE_TODAY: "1"
         run: |
