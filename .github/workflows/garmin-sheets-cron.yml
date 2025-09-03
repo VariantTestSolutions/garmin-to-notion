@@ -2,11 +2,8 @@ name: garmin-sheets-cron
 
 on:
   schedule:
-    # 05:00–09:59 US/Pacific every 15 minutes.
-    # UTC note: During PDT (UTC-7) this is 12-16 UTC. During PST (UTC-8) adjust to 13-17 UTC.
-    - cron: "*/15 12-16 * * *"
-    # Hourly all day
-    - cron: "0 * * * *"
+    - cron: "*/15 12-16 * * *"  # every 15 min 05:00-09:59 PT (during PDT)
+    - cron: "0 * * * *"         # hourly all day
   workflow_dispatch:
 
 jobs:
@@ -25,31 +22,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install garth garminconnect python-dotenv gspread google-auth
 
-      # Optional: restore the Garmin token-store directory from a secret.
-      # Create GARMIN_TOKEN_STORE_TGZ_B64 as the base64 of a .tgz containing ~/.garmin_tokens
       - name: Restore Garmin token-store directory
+        if: ${{ secrets.GARMIN_TOKEN_STORE_TGZ_B64 != '' }}
         shell: bash
-        env:
-          TOK_B64: ${{ secrets.GARMIN_TOKEN_STORE_TGZ_B64 }}
         run: |
-          if [ -n "$TOK_B64" ]; then
-            mkdir -p "$RUNNER_TEMP/garmin_tokens"
-            echo "$TOK_B64" | base64 -d > "$RUNNER_TEMP/garmin_tokens.tgz"
-            tar -C "$RUNNER_TEMP/garmin_tokens" -xzf "$RUNNER_TEMP/garmin_tokens.tgz"
-            echo "[ok] Token store restored"
-          else
-            echo "[skip] GARMIN_TOKEN_STORE_TGZ_B64 not set; continuing"
-          fi
+          mkdir -p "$RUNNER_TEMP/garmin_tokens"
+          echo "${{ secrets.GARMIN_TOKEN_STORE_TGZ_B64 }}" | base64 -d > "$RUNNER_TEMP/garmin_tokens.tgz"
+          tar -C "$RUNNER_TEMP/garmin_tokens" -xzf "$RUNNER_TEMP/garmin_tokens.tgz"
+          echo "[ok] Token store restored"
 
-      # Write Google Service Account JSON to a file to avoid inline JSON parsing issues
       - name: Write Google SA key to file
         shell: bash
         run: |
-          # Safe heredoc preserves exact JSON formatting
           cat > "$RUNNER_TEMP/sa.json" <<'JSON'
 ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
 JSON
-          # Sanity check (does not print secrets)
           python - <<'PY'
 import json, os
 p = os.environ["RUNNER_TEMP"] + "/sa.json"
@@ -61,16 +48,9 @@ PY
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
-
-          # If the token dir was restored above, this path will exist:
           GARMIN_TOKEN_STORE: ${{ runner.temp }}/garmin_tokens/.garmin_tokens
-
           LOCAL_TZ: America/Los_Angeles
-
-          # Use the file we just wrote:
           GOOGLE_SERVICE_ACCOUNT_FILE: ${{ runner.temp }}/sa.json
-          # Do NOT pass inline JSON here.
-
           GOOGLE_SHEETS_SPREADSHEET_ID: ${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}
           GOOGLE_SHEETS_WORKSHEET_TITLE: Garmin Daily
           WINDOW_DAYS: "5"
