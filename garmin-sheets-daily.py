@@ -572,11 +572,6 @@ def main():
             P["WeightLb"]: weight_lb,
         }
 
-        # Only write these if present (to preserve historical values)
-        for _k in (P["IntensityMin"], P["IntensityMod"], P["IntensityVig"], P["HRV"]):
-            if props.get(_k) is None:
-                props.pop(_k, None)
-
         # Upsert by Date (first column)
         row_values = [props.get(h, "") for h in SHEET_HEADERS]
 
