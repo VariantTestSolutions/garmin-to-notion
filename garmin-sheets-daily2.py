@@ -370,7 +370,7 @@ def login_to_garmin():
     # CHANGED: Initialize garth first to ensure it's configured
     try:
         garth.resume(token_store)
-        print(f"[garmin] Resumed tokens from {token_store} for garth")
+        print(f"[garmin] Resumed tokens from {token_store} for garth")g = Garmin(garmin_email, garmin_password) # CHANGED: Removed token_store argument
     except Exception as resume_err:
         print(f"[garmin] No usable tokens for garth, will login: {resume_err}")
         if mfa_code:
@@ -385,11 +385,11 @@ def login_to_garmin():
         print(f"[garmin] Saved new garth tokens to {token_store}")
         
     # CHANGED: Initialize Garmin object *after* garth is handled
-    g = Garmin(garmin_email, garmin_password, token_store=token_store)
+        g = Garmin(garmin_email, garmin_password) # CHANGED: Removed token_store argument
 
     try:
         # CHANGED: Use the existing token store for the Garmin object login
-        g.login() 
+        g.login(tokenstore=token_store) # CHANGED: Added tokenstore argument
         print(f"[garmin] Garmin object login successful using tokens from {token_store}")
         return g, token_store
     except Exception as e:
