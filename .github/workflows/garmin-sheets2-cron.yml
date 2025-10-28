@@ -1,4 +1,4 @@
-name: garmin-sheets-cron
+name: garmin-sheets-cron2
 
 on:
   schedule:
