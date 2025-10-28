@@ -49,7 +49,6 @@ jobs:
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
-          GARMIN_TOKEN_STORE: ${{ runner.temp }}/garmin_tokens/.garmin_tokens
           LOCAL_TZ: America/Los_Angeles
           GOOGLE_SERVICE_ACCOUNT_FILE: ${{ runner.temp }}/sa.json
           GOOGLE_SHEETS_SPREADSHEET_ID: ${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}
