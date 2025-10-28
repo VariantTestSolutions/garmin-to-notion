@@ -40,7 +40,7 @@ GARMIN_EMAIL = os.getenv('GARMIN_EMAIL')
 GARMIN_PASSWORD = os.getenv('GARMIN_PASSWORD')
 GSHEET_JSON = os.getenv('GSHEET_JSON')
 GSHEET_NAME = '2025 Overview' # CHANGED: Assuming this is the name, correct if needed.
-WORKSHEET_NAME = 'Garmin Data'
+WORKSHEET_NAME = 'Garmin Data Expanded'
 DAYS_TO_FETCH = 14
 
 # --- Utility Functions ---
