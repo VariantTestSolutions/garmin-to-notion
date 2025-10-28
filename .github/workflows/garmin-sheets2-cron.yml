@@ -53,7 +53,7 @@ jobs:
           LOCAL_TZ: America/Los_Angeles
           GOOGLE_SERVICE_ACCOUNT_FILE: ${{ runner.temp }}/sa.json
           GOOGLE_SHEETS_SPREADSHEET_ID: ${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}
-          GOOGLE_SHEETS_WORKSHEET_TITLE: ${{ secrets.GOOGLE_SHEETS_WORKSHEET_TITLE }}
+          GOOGLE_SHEETS_WORKSHEET_TITLE: ${{ secrets.GOOGLE_SHEETS_WORKSHEET_TITLE2 }}
           WINDOW_DAYS: "14"
           INCLUDE_TODAY: "1"
         run: python garmin-sheets-daily2.py
