@@ -107,7 +107,8 @@ def seconds_to_minutes(seconds):
 def format_sleep_time(timestamp):
     """Formats sleep timestamp string."""
     if timestamp:
-        return timestamp.replace('T', ' ').replace('.0', '')
+        # CHANGED: Convert to string first to handle integer timestamps
+        return str(timestamp).replace('T', ' ').replace('.0', '')
     return ""
 
 # --- Garmin API Fetch Functions ---
@@ -343,7 +344,7 @@ def get_gspread_client():
     except Exception as e:
         logging.error(f"Failed to initialize gspread client: {e}")
         raise
-    
+
 # -----------------------------
 # Garmin login (CI-safe)
 # -----------------------------
@@ -458,7 +459,7 @@ def main():
 
     try:
         worksheet.clear()
-        worksheet.update('A1', all_rows_data, value_input_option='USER_ENTERED')
+        worksheet.update(range_name='A1', values=all_rows_data, value_input_option='USER_ENTERED')
         logging.info(f"Successfully updated Google Sheet with {len(all_rows_data) - 1} days of data.")
     except Exception as e:
         logging.error(f"Failed to update Google Sheet: {e}")
