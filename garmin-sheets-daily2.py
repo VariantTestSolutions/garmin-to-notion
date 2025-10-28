@@ -1,4 +1,4 @@
-# CHANGED: This file has been updated to pull an expanded list of metrics and map them to the new header order.
+# CHANGED: his file has been updated to pull an expanded list of metrics and map them to the new header order.
 
 import gspread
 import os
@@ -44,7 +44,7 @@ GSHEET_SA_FILE = os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE')
 # This is the Spreadsheet ID, not the name
 GSHEET_ID = os.getenv('GOOGLE_SHEETS_SPREADSHEET_ID')
 # This is the Worksheet (tab) name
-WORKSHEET_NAME = os.getenv('GOOGLE_SHEETS_WORKSHEET_TITLE')
+WORKSHEET_NAME = os.getenv('GOOGLE_SHEETS_WORKSHEET_TITLE2')
 # This is the number of days to fetch
 DAYS_TO_FETCH = int(os.getenv('WINDOW_DAYS', 14)) # Default to 14
 # --- END OF CHANGE ---
@@ -344,21 +344,18 @@ def main():
     Main function to fetch data from Garmin and update Google Sheet.
     """
     # CHANGED: Updated the check to use the new variable names
-    if not all([GARMIN_EMAIL, GARMIN_PASSWORD, GSHEET_SA_FILE, GSHEET_ID, WORKSHEET_NAME]):
-        logging.error("Missing one or more required environment variables (GARMIN_EMAIL, GARMIN_PASSWORD, GOOGLE_SERVICE_ACCOUNT_FILE, GOOGLE_SHEETS_SPREADSHEET_ID, GOOGLE_SHEETS_WORKSHEET_TITLE).")
+    if not all([GSHEET_SA_FILE, GSHEET_ID, WORKSHEET_NAME]):
+        logging.error("Missing one or more required GOOGLE environment variables (GOOGLE_SERVICE_ACCOUNT_FILE, GOOGLE_SHEETS_SPREADSHEET_ID, GOOGLE_SHEETS_WORKSHEET_TITLE).")
         return
 
     logging.info("Starting Garmin data sync...")
 
+    # CHANGED: Use the robust login function
     try:
-        api = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-        api.login()
-        logging.info("Garmin login successful.")
-    except (GarminConnectConnectionError, GarminConnectTooManyRequestsError, GarminConnectAuthenticationError) as e:
-        logging.error(f"Garmin login failed: {e}")
-        return
+        api, token_store_path = login_to_garmin()
+        logging.info(f"Garmin login successful, tokens at {token_store_path}")
     except Exception as e:
-        logging.error(f"An unexpected error occurred during Garmin login: {e}")
+        logging.error(f"Garmin login failed: {e}")
         return
 
     try:
