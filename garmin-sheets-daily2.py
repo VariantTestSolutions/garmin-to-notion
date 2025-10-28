@@ -1,14 +1,16 @@
-# CHANGED: his file has been updated to pull an expanded list of metrics and map them to the new header order.
+# CHANGED: This file has been updated to pull an expanded list of metrics and map them to the new header order.
+# CHANGED: Re-implemented fetching logic to use garth directly for reliability, mirroring the working script.
 
 import gspread
 import os
 import logging
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, timezone # CHANGED: Added imports
 import garth
 import sys
 import base64
 import tarfile
 import io
+import calendar # CHANGED: Added import
 from garminconnect import (
     Garmin,
     GarminConnectConnectionError,
@@ -21,15 +23,15 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # --- Configuration ---
 
-# CHANGED: Replaced the old list with the new 53-column header list.
+# CHANGED: Removed unsupported fields (Sleep Respiration, Naps, Health Snapshot)
 HEADER_ROW = [
     'Date', 'weekday', 'Weight (lb)', 'Training Readiness (0-100)', 'Training Status',
-    'Resting HR', 'HRV', 'Respiration Rate Avg (BPM)', 'Sleep Respiration Rate Avg (BPM)',
+    'Resting HR', 'HRV', 'Respiration Rate Avg (BPM)', 
     'Sleep Score (0-100)', 'Sleep Total (h)', 'Sleep Light (h)', 'Sleep Deep (h)',
     'Sleep REM (h)', 'Sleep Awake (h)', 'Sleep Start (local)', 'Sleep End (local)',
     'Sleep Overall (q)', 'Sleep Duration (q)', 'Sleep Stress (q)', 'Sleep Awake Count (q)',
     'Sleep REM % (q)', 'Sleep Restlessness (q)', 'Sleep Light % (q)', 'Sleep Deep % (q)',
-    'Nap Duration (h)', 'Stress Avg', 'Stress Max', 'Rest Stress Duration(h)',
+    'Stress Avg', 'Stress Max', 'Rest Stress Duration(h)',
     'Low Stress Duration (h)', 'Medium Stress Duration (h)', 'High Stress Duration (h)',
     'Uncategorized Stress Duration (h)', 'Body Battery Avg', 'Body Battery Max',
     'Body Battery Min', 'Steps', 'Step Goal', 'Walk Distance (mi)', 'Activities (#)',
@@ -37,7 +39,6 @@ HEADER_ROW = [
     'Activity Names', 'Activity Types', 'primary_sport', 'activity_types_unique',
     'Training Effect (list)', 'Aerobic Effect (list)', 'Anaerobic Effect (list)',
     'Intensity Minutes', 'Intensity Moderate (min)', 'Intensity Vigorous (min)',
-    'Health Snapshot'
 ]
 
 # --- CHANGED: Updated to read variables from the new YAML file ---
@@ -113,49 +114,16 @@ def format_sleep_time(timestamp):
 
 # --- Garmin API Fetch Functions ---
 
-def get_daily_stats(api, date_str):
-    """Fetches combined daily stats."""
-    try:
-        return api.get_stats(date_str)
-    except Exception as e:
-        logging.warning(f"Could not fetch get_stats for {date_str}: {e}")
-        return None
-
+# CHANGED: This function is being kept
 def get_sleep_data(api, date_str):
     """Fetches sleep data."""
     try:
-        # CHANGED: Modified to fetch sleep score data as well.
         return api.get_sleep_data(date_str)
     except Exception as e:
         logging.warning(f"Could not fetch sleep data for {date_str}: {e}")
         return None
 
-def get_stress_data(api, date_str):
-    """Fetches stress data."""
-    try:
-        # CHANGED: Modified to fetch duration data.
-        return api.get_stress_data(date_str)
-    except Exception as e:
-        logging.warning(f"Could not fetch stress data for {date_str}: {e}")
-        return None
-
-def get_body_battery(api, date_str):
-    """Fetches body battery data."""
-    try:
-        # CHANGED: Modified to fetch max value.
-        return api.get_body_battery(date_str)
-    except Exception as e:
-        logging.warning(f"Could not fetch body battery for {date_str}: {e}")
-        return None
-
-def get_hrv_data(api, date_str):
-    """Fetches HRV data."""
-    try:
-        return api.get_hrv_data(date_str)
-    except Exception as e:
-        logging.warning(f"Could not fetch HRV data for {date_str}: {e}")
-        return None
-
+# CHANGED: This function is being kept
 def get_activities_data(api, date_str):
     """Fetches activities for the day."""
     try:
@@ -164,71 +132,31 @@ def get_activities_data(api, date_str):
         logging.warning(f"Could not fetch activities for {date_str}: {e}")
         return []
 
+# CHANGED: Added this function to get Steps and Step Goal
+def get_daily_steps(api, date_str):
+    """Fetches daily steps and goal."""
+    try:
+        return api.get_daily_steps(date_str)
+    except Exception as e:
+        logging.warning(f"Could not fetch daily steps for {date_str}: {e}")
+        return None
+
+# CHANGED: Added this function to get RHR
 def get_user_summary(api, date_str):
-    """Fetches user summary (RHR, Weight)."""
+    """Fetches user summary (RHR)."""
     try:
         return api.get_user_summary(date_str)
     except Exception as e:
         logging.warning(f"Could not fetch user summary for {date_str}: {e}")
         return None
 
-# CHANGED: Added helper for Training Readiness
-def get_training_readiness(api, date_str):
-    """Fetches training readiness."""
-    try:
-        return api.get_training_readiness(date_str)
-    except Exception as e:
-        logging.warning(f"Could not fetch training readiness for {date_str}: {e}")
-        return None
-
-# CHANGED: Added helper for Training Status
-def get_training_status(api, date_str):
-    """Fetches training status."""
-    try:
-        return api.get_training_status(date_str)
-    except Exception as e:
-        logging.warning(f"Could not fetch training status for {date_str}: {e}")
-        return None
-
-# CHANGED: Added helper for Daily Respiration
-def get_daily_respiration(api, date_str):
-    """Fetches daily respiration data."""
-    try:
-        return api.get_respiration_data(date_str)
-    except Exception as e:
-        logging.warning(f"Could not fetch daily respiration for {date_str}: {e}")
-        return None
-
-# CHANGED: Added helper for Sleep Respiration
-def get_sleep_respiration(api, date_str):
-    """Fetches sleep respiration data."""
-    try:
-        return api.get_sleep_respiration_data(date_str)
-    except Exception as e:
-        logging.warning(f"Could not fetch sleep respiration for {date_str}: {e}")
-        return None
-
-# CHANGED: Added helper for Naps
-def get_naps(api, date_str):
-    """Fetches nap data."""
-    try:
-        return api.get_naps(date_str)
-    except Exception as e:
-        logging.warning(f"Could not fetch naps for {date_str}: {e}")
-        return []
-
-# CHANGED: Added helper for Health Snapshots
-def get_health_snapshots(api, date_str):
-    """Fetches health snapshots."""
-    try:
-        return api.get_health_snapshot(date_str)
-    except Exception as e:
-        logging.warning(f"Could not fetch health snapshots for {date_str}: {e}")
-        return []
+# CHANGED: Removed get_daily_stats, get_stress_data, get_body_battery, get_hrv_data
+# CHANGED: Removed get_training_readiness, get_training_status, get_daily_respiration
+# CHANGED: Removed get_sleep_respiration, get_naps, get_health_snapshots (unsupported)
 
 # --- Main Data Processing ---
 
-# CHANGED: This function is rewritten to map all new metrics to the new header order.
+# CHANGED: This function is rewritten to use direct garth calls for reliability.
 def fetch_garmin_data(api, target_date):
     """
     Fetches all required Garmin data for a single day and maps it to the
@@ -237,22 +165,85 @@ def fetch_garmin_data(api, target_date):
     date_str = target_date.isoformat()
     logging.info(f"Fetching data for {date_str}...")
 
-    # Fetch all data points
-    stats = get_daily_stats(api, date_str)
-    user_summary = get_user_summary(api, date_str)
+    # --- Fetch all data points ---
+    # Using 'api' object for these as they are reliable
     sleep = get_sleep_data(api, date_str)
-    stress = get_stress_data(api, date_str)
-    body_battery_data = get_body_battery(api, date_str)
-    hrv = get_hrv_data(api, date_str)
     activities = get_activities_data(api, date_str)
-    readiness = get_training_readiness(api, date_str)
-    training_status = get_training_status(api, date_str)
-    daily_resp = get_daily_respiration(api, date_str)
-    sleep_resp = get_sleep_respiration(api, date_str)
-    naps = get_naps(api, date_str)
-    snapshots = get_health_snapshots(api, date_str)
+    steps_data = get_daily_steps(api, date_str) # For steps and goal
+    user_summary = get_user_summary(api, date_str) # For RHR
+    
+    # --- Using 'garth' directly for wellness stats (more reliable) ---
+    daily_bb_stress = None
+    try:
+        daily_bb_stress = garth.DailyBodyBatteryStress.get(date_str)
+    except Exception as e:
+        logging.warning(f"Could not fetch BodyBattery/Stress for {date_str}: {e}")
 
-    # --- Process Activity Data ---
+    intensity = None
+    try:
+        intensity = garth.DailyIntensityMinutes.get(date_str)
+    except Exception as e:
+        logging.warning(f"Could not fetch IntensityMinutes for {date_str}: {e}")
+
+    hrv_data = None
+    try:
+        hrv_data = garth.DailyHRV.get(date_str)
+    except Exception as e:
+        logging.warning(f"Could not fetch HRV for {date_str}: {e}")
+        
+    weight_data = None
+    try:
+        weight_data = garth.WeightData.get(date_str)
+    except Exception as e:
+        logging.warning(f"Could not fetch Weight for {date_str}: {e}")
+        
+    readiness = None
+    try:
+        readiness = garth.DailyTrainingReadiness.get(date_str)
+    except Exception as e:
+        logging.warning(f"Could not fetch Training Readiness for {date_str}: {e}")
+
+    training_status = None
+    try:
+        training_status = garth.DailyTrainingStatus.get(date_str)
+    except Exception as e:
+        logging.warning(f"Could not fetch Training Status for {date_str}: {e}")
+        
+    daily_resp = None
+    try:
+        daily_resp = garth.DailyRespiration.get(date_str)
+    except Exception as e:
+        logging.warning(f"Could not fetch Respiration for {date_str}: {e}")
+
+    # --- Process Fetched Data ---
+
+    # Process Weight
+    weight_lb = None
+    if weight_data and hasattr(weight_data, 'weight'):
+        grams = getattr(weight_data, "weight", None)
+        if grams is not None:
+            weight_lb = round((grams / 1000) * 2.20462, 2)
+
+    # Process Body Battery
+    bb_avg = None
+    bb_min = None
+    bb_max = None
+    if daily_bb_stress and hasattr(daily_bb_stress, 'body_battery_readings'):
+        levels = [getattr(x, "level", None) for x in getattr(daily_bb_stress, "body_battery_readings", [])]
+        levels = [lv for lv in levels if isinstance(lv, (int, float))]
+        if levels:
+            bb_avg = round(sum(levels) / len(levels), 1)
+            bb_min = min(levels)
+        # Max value is on the main object
+        if hasattr(daily_bb_stress, 'max_body_battery'):
+             bb_max = getattr(daily_bb_stress, "max_body_battery", None)
+
+    # Process Steps
+    steps = try_get(steps_data, [0, 'totalSteps'], "")
+    step_goal = try_get(steps_data, [0, 'stepGoal'], "")
+    walk_dist_m = try_get(steps_data, [0, 'totalDistance'], 0)
+    
+    # Process Activity Data
     activity_count = len(activities)
     activity_dist_m = sum(try_get(act, ['distance'], 0) for act in activities)
     activity_dur_s = sum(try_get(act, ['duration'], 0) for act in activities)
@@ -265,26 +256,18 @@ def fetch_garmin_data(api, target_date):
     aerobic_effect = format_list([try_get(act, ['aerobicTrainingEffect'], "N/A") for act in activities])
     anaerobic_effect = format_list([try_get(act, ['anaerobicTrainingEffect'], "N/A") for act in activities])
 
-    # --- Process Nap Data ---
-    total_nap_seconds = sum(try_get(nap, ['durationInSeconds'], 0) for nap in naps)
-
-    # --- Process Health Snapshot Data ---
-    snapshot_times = format_list([
-        format_sleep_time(try_get(snap, ['startTimeLocal'], "N/A")) for snap in snapshots
-    ])
-
     # --- Build Row Data in Order ---
     # This list maps directly to the HEADER_ROW
     row_data = [
         date_str, # Date
         target_date.strftime('%A'), # weekday
-        try_get(user_summary, ['weightInLbs'], ""), # Weight (lb)
-        try_get(readiness, ['trainingReadiness'], ""), # Training Readiness (0-100)
-        try_get(training_status, ['trainingStatus'], ""), # Training Status
+        weight_lb, # Weight (lb)
+        getattr(readiness, "training_readiness", ""), # Training Readiness (0-100)
+        getattr(training_status, "training_status", ""), # Training Status
         try_get(user_summary, ['restingHeartRate'], ""), # Resting HR
-        try_get(hrv, ['lastNightAvg'], ""), # HRV
-        try_get(daily_resp, ['avgOverallBreathsPerMin'], ""), # Respiration Rate Avg (BPM)
-        try_get(sleep_resp, ['avgBreathsPerMin'], ""), # Sleep Respiration Rate Avg (BPM)
+        getattr(hrv_data, "last_night_avg", ""), # HRV
+        getattr(daily_resp, "avg_overall_breaths_per_min", ""), # Respiration Rate Avg (BPM)
+        # REMOVED: Sleep Respiration
         try_get(sleep, ['sleepScores', 'overallScore'], ""), # Sleep Score (0-100)
         seconds_to_hours(try_get(sleep, ['dailySleepDTO', 'sleepTimeSeconds'], 0)), # Sleep Total (h)
         seconds_to_hours(try_get(sleep, ['dailySleepDTO', 'lightSleepSeconds'], 0)), # Sleep Light (h)
@@ -301,20 +284,20 @@ def fetch_garmin_data(api, target_date):
         try_get(sleep, ['sleepScores', 'restlessness'], ""), # Sleep Restlessness (q)
         try_get(sleep, ['sleepScores', 'lightPercentage'], ""), # Sleep Light % (q)
         try_get(sleep, ['sleepScores', 'deepPercentage'], ""), # Sleep Deep % (q)
-        seconds_to_hours(total_nap_seconds), # Nap Duration (h)
-        try_get(stress, ['averageStressLevel'], ""), # Stress Avg
-        try_get(stress, ['maxStressLevel'], ""), # Stress Max
-        seconds_to_hours(try_get(stress, ['restStressDurationInSeconds'], 0)), # Rest Stress Duration(h)
-        seconds_to_hours(try_get(stress, ['lowStressDurationInSeconds'], 0)), # Low Stress Duration (h)
-        seconds_to_hours(try_get(stress, ['mediumStressDurationInSeconds'], 0)), # Medium Stress Duration (h)
-        seconds_to_hours(try_get(stress, ['highStressDurationInSeconds'], 0)), # High Stress Duration (h)
-        seconds_to_hours(try_get(stress, ['uncategorizedStressDurationInSeconds'], 0)), # Uncategorized Stress Duration (h)
-        try_get(body_battery_data, [-1, 'bodyBatteryValue'], ""), # Body Battery Avg (approx by last value)
-        try_get(body_battery_data, [0, 'bodyBatteryMaxValue'], ""), # Body Battery Max
-        try_get(body_battery_data, [0, 'bodyBatteryMinValue'], ""), # Body Battery Min
-        try_get(stats, ['totalSteps'], ""), # Steps
-        try_get(stats, ['stepGoal'], ""), # Step Goal
-        meters_to_miles(try_get(stats, ['totalDistanceMeters'], 0)), # Walk Distance (mi)
+        # REMOVED: Nap Duration
+        getattr(daily_bb_stress, "avg_stress_level", ""), # Stress Avg
+        getattr(daily_bb_stress, "max_stress_level", ""), # Stress Max
+        seconds_to_hours(getattr(daily_bb_stress, "rest_stress_duration_seconds", 0)), # Rest Stress Duration(h)
+        seconds_to_hours(getattr(daily_bb_stress, "low_stress_duration_seconds", 0)), # Low Stress Duration (h)
+        seconds_to_hours(getattr(daily_bb_stress, "medium_stress_duration_seconds", 0)), # Medium Stress Duration (h)
+        seconds_to_hours(getattr(daily_bb_stress, "high_stress_duration_seconds", 0)), # High Stress Duration (h)
+        seconds_to_hours(getattr(daily_bb_stress, "uncategorized_stress_duration_seconds", 0)), # Uncategorized Stress Duration (h)
+        bb_avg, # Body Battery Avg
+        bb_max, # Body Battery Max
+        bb_min, # Body Battery Min
+        steps, # Steps
+        step_goal, # Step Goal
+        meters_to_miles(walk_dist_m), # Walk Distance (mi)
         activity_count, # Activities (#)
         meters_to_miles(activity_dist_m), # Activity Distance (mi)
         seconds_to_minutes(activity_dur_s), # Activity Duration (min)
@@ -326,10 +309,10 @@ def fetch_garmin_data(api, target_date):
         training_effect, # Training Effect (list)
         aerobic_effect, # Aerobic Effect (list)
         anaerobic_effect, # Anaerobic Effect (list)
-        try_get(stats, ['intensityMinutes'], ""), # Intensity Minutes
-        try_get(stats, ['moderateIntensityMinutes'], ""), # Intensity Moderate (min)
-        try_get(stats, ['vigorousIntensityMinutes'], ""), # Intensity Vigorous (min)
-        snapshot_times # Health Snapshot
+        getattr(intensity, "total_value", ""), # Intensity Minutes
+        getattr(intensity, "moderate_value", ""), # Intensity Moderate (min)
+        getattr(intensity, "vigorous_value", ""), # Intensity Vigorous (min)
+        # REMOVED: Health Snapshot
     ]
 
     return row_data
@@ -384,34 +367,41 @@ def login_to_garmin():
 
     _maybe_restore_token_dir_from_tgz(token_store)
 
-    g = Garmin(garmin_email, garmin_password)
+    # CHANGED: Initialize garth first to ensure it's configured
     try:
-        try:
-            if os.path.isdir(token_store) and os.listdir(token_store):
-                garth.resume(token_store)
-                print(f"[garmin] Resumed tokens from {token_store}")
-            else:
-                raise RuntimeError("Token dir missing or empty")
-        except Exception as resume_err:
-            print(f"[garmin] No usable tokens to resume: {resume_err}")
-            if mfa_code:
-                print("[garmin] Performing non-interactive MFA login")
-                client_state, _ = g.login(return_on_mfa=True)
-                if client_state == "needs_mfa":
-                    g.resume_login(client_state, mfa_code)
-            else:
-                g.login()
-            _ensure_dir(token_store)
-            if hasattr(g, "garth") and g.garth:
-                g.garth.save(token_store)
-            garth.save(token_store)
-            print(f"[garmin] Saved new tokens to {token_store}")
+        garth.resume(token_store)
+        print(f"[garmin] Resumed tokens from {token_store} for garth")
+    except Exception as resume_err:
+        print(f"[garmin] No usable tokens for garth, will login: {resume_err}")
+        if mfa_code:
+            print("[garmin] Performing non-interactive MFA login for garth")
+            client_state = garth.login(garmin_email, garmin_password, return_on_mfa=True)
+            if client_state:
+                garth.resume_login(client_state, mfa_code)
+        else:
+            garth.login(garmin_email, garmin_password)
+        _ensure_dir(token_store)
+        garth.save(token_store)
+        print(f"[garmin] Saved new garth tokens to {token_store}")
+        
+    # CHANGED: Initialize Garmin object *after* garth is handled
+    g = Garmin(garmin_email, garmin_password, token_store=token_store)
 
-        g.login(tokenstore=token_store)
+    try:
+        # CHANGED: Use the existing token store for the Garmin object login
+        g.login() 
+        print(f"[garmin] Garmin object login successful using tokens from {token_store}")
         return g, token_store
     except Exception as e:
-        print(f"[garmin] Login error: {e}")
-        sys.exit(1)
+        print(f"[garmin] Garmin object login error: {e}")
+        # Fallback login attempt for the Garmin object
+        try:
+            g.login()
+            print(f"[garmin] Garmin object login successful on fallback.")
+            return g, token_store
+        except Exception as e2:
+            print(f"[garmin] Full login error: {e2}")
+            sys.exit(1)
 
 def main():
     """
@@ -453,12 +443,13 @@ def main():
             daily_data = fetch_garmin_data(api, target_date)
             all_rows_data.append(daily_data)
         except Exception as e:
-            logging.error(f"Failed to fetch data for {target_date}: {e}")
+            logging.error(f"Failed to fetch data for {target_date}: {e}", exc_info=True) # CHANGED: Added exc_info for better debugging
             # Append a row with just the date and weekday to show a gap
             all_rows_data.append([target_date.isoformat(), target_date.strftime('%A')] + [''] * (len(HEADER_ROW) - 2)) 
 
     try:
         worksheet.clear()
+        # CHANGED: Use named arguments to fix DeprecationWarning
         worksheet.update(range_name='A1', values=all_rows_data, value_input_option='USER_ENTERED')
         logging.info(f"Successfully updated Google Sheet with {len(all_rows_data) - 1} days of data.")
     except Exception as e:
