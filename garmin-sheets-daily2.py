@@ -35,13 +35,19 @@ HEADER_ROW = [
     'Health Snapshot'
 ]
 
+# --- CHANGED: Updated to read variables from the new YAML file ---
 # Environment variables
 GARMIN_EMAIL = os.getenv('GARMIN_EMAIL')
 GARMIN_PASSWORD = os.getenv('GARMIN_PASSWORD')
-GSHEET_JSON = os.getenv('GSHEET_JSON')
-GSHEET_NAME = '2025 Overview' # CHANGED: Assuming this is the name, correct if needed.
-WORKSHEET_NAME = 'Garmin Data Expanded'
-DAYS_TO_FETCH = 14
+# This is now a FILE PATH provided by the YAML, not JSON content
+GSHEET_SA_FILE = os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE')
+# This is the Spreadsheet ID, not the name
+GSHEET_ID = os.getenv('GOOGLE_SHEETS_SPREADSHEET_ID')
+# This is the Worksheet (tab) name
+WORKSHEET_NAME = os.getenv('GOOGLE_SHEETS_WORKSHEET_TITLE')
+# This is the number of days to fetch
+DAYS_TO_FETCH = int(os.getenv('WINDOW_DAYS', 14)) # Default to 14
+# --- END OF CHANGE ---
 
 # --- Utility Functions ---
 
@@ -326,7 +332,8 @@ def fetch_garmin_data(api, target_date):
 def get_gspread_client():
     """Initializes and returns the gspread client."""
     try:
-        gc = gspread.service_account_from_dict(eval(GSHEET_JSON))
+        # CHANGED: Use service_account(filename=...) instead of ...from_dict(eval(...))
+        gc = gspread.service_account(filename=GSHEET_SA_FILE)
         return gc
     except Exception as e:
         logging.error(f"Failed to initialize gspread client: {e}")
@@ -336,8 +343,9 @@ def main():
     """
     Main function to fetch data from Garmin and update Google Sheet.
     """
-    if not all([GARMIN_EMAIL, GARMIN_PASSWORD, GSHEET_JSON]):
-        logging.error("Missing one or more environment variables.")
+    # CHANGED: Updated the check to use the new variable names
+    if not all([GARMIN_EMAIL, GARMIN_PASSWORD, GSHEET_SA_FILE, GSHEET_ID, WORKSHEET_NAME]):
+        logging.error("Missing one or more required environment variables (GARMIN_EMAIL, GARMIN_PASSWORD, GOOGLE_SERVICE_ACCOUNT_FILE, GOOGLE_SHEETS_SPREADSHEET_ID, GOOGLE_SHEETS_WORKSHEET_TITLE).")
         return
 
     logging.info("Starting Garmin data sync...")
@@ -355,9 +363,11 @@ def main():
 
     try:
         gc = get_gspread_client()
-        sh = gc.open(GSHEET_NAME)
+        # CHANGED: Open the sheet by KEY (ID) instead of by NAME
+        sh = gc.open_by_key(GSHEET_ID)
+        # CHANGED: Open the worksheet by the variable name
         worksheet = sh.worksheet(WORKSHEET_NAME)
-        logging.info(f"Opened Google Sheet '{GSHEET_NAME}' and worksheet '{WORKSHEET_NAME}'.")
+        logging.info(f"Opened Google Sheet (ID: {GSHEET_ID}) and worksheet '{WORKSHEET_NAME}'.")
     except Exception as e:
         logging.error(f"Failed to open Google Sheet: {e}")
         return
@@ -365,6 +375,7 @@ def main():
     today = date.today()
     all_rows_data = [HEADER_ROW]  # Start with the header
 
+    # CHANGED: The 'range' logic now correctly uses the DAYS_TO_FETCH variable
     for i in range(DAYS_TO_FETCH - 1, -1, -1):  # Fetch last 14 days, ending with today
         target_date = today - timedelta(days=i)
         try:
@@ -373,7 +384,7 @@ def main():
         except Exception as e:
             logging.error(f"Failed to fetch data for {target_date}: {e}")
             # Append a row with just the date and weekday to show a gap
-            all_rows_data.append([target_date.isoformat(), target_date.strftime('%A')] + [''] * (len(HEADER_ROW) - 2)) # CHANGED: Adjusted empty row length
+            all_rows_data.append([target_date.isoformat(), target_date.strftime('%A')] + [''] * (len(HEADER_ROW) - 2)) 
 
     try:
         worksheet.clear()
