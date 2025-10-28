@@ -4,6 +4,11 @@ import gspread
 import os
 import logging
 from datetime import date, timedelta
+import garth
+import sys
+import base64
+import tarfile
+import io
 from garminconnect import (
     Garmin,
     GarminConnectConnectionError,
@@ -338,6 +343,74 @@ def get_gspread_client():
     except Exception as e:
         logging.error(f"Failed to initialize gspread client: {e}")
         raise
+    
+# -----------------------------
+# Garmin login (CI-safe)
+# -----------------------------
+def _ensure_dir(path: str):
+    os.makedirs(path, exist_ok=True)
+
+def _maybe_restore_token_dir_from_tgz(token_dir: str):
+    b64 = os.getenv("GARMIN_TOKEN_STORE_TGZ_B64")
+    if not b64:
+        return
+    needs_restore = (not os.path.exists(token_dir)) or (os.path.isdir(token_dir) and not os.listdir(token_dir))
+    if not needs_restore:
+        return
+    try:
+        _ensure_dir(token_dir)
+        data = base64.b64decode(b64)
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+            tar.extractall(token_dir)
+        print(f"[garmin] Restored token-store from GARMIN_TOKEN_STORE_TGZ_B64 into {token_dir}")
+    except Exception as e:
+        print(f"[garmin] Failed to restore token-store from GARMIN_TOKEN_STORE_TGZ_B64: {e}")
+
+def login_to_garmin():
+    garmin_email = os.getenv("GARMIN_EMAIL")
+    garmin_password = os.getenv("GARMIN_PASSWORD")
+    token_store = os.getenv("GARMIN_TOKEN_STORE", "~/.garmin_tokens")
+    token_store = os.path.expanduser(token_store).rstrip("/")
+    mfa_code = os.getenv("GARMIN_MFA_CODE")
+
+    if not garmin_email or not garmin_password:
+        print("Missing GARMIN_EMAIL or GARMIN_PASSWORD")
+        sys.exit(1)
+
+    if os.path.exists(token_store) and not os.path.isdir(token_store):
+        print(f"[garmin] GARMIN_TOKEN_STORE points to a file: {token_store}. Expected a directory.")
+        sys.exit(1)
+
+    _maybe_restore_token_dir_from_tgz(token_store)
+
+    g = Garmin(garmin_email, garmin_password)
+    try:
+        try:
+            if os.path.isdir(token_store) and os.listdir(token_store):
+                garth.resume(token_store)
+                print(f"[garmin] Resumed tokens from {token_store}")
+            else:
+                raise RuntimeError("Token dir missing or empty")
+        except Exception as resume_err:
+            print(f"[garmin] No usable tokens to resume: {resume_err}")
+            if mfa_code:
+                print("[garmin] Performing non-interactive MFA login")
+                client_state, _ = g.login(return_on_mfa=True)
+                if client_state == "needs_mfa":
+                    g.resume_login(client_state, mfa_code)
+            else:
+                g.login()
+            _ensure_dir(token_store)
+            if hasattr(g, "garth") and g.garth:
+                g.garth.save(token_store)
+            garth.save(token_store)
+            print(f"[garmin] Saved new tokens to {token_store}")
+
+        g.login(tokenstore=token_store)
+        return g, token_store
+    except Exception as e:
+        print(f"[garmin] Login error: {e}")
+        sys.exit(1)
 
 def main():
     """
