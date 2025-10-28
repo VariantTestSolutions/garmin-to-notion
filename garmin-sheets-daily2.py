@@ -1,25 +1,24 @@
 """
-Garmin → Google Sheets Daily Rollup — v4.2.0
-Change: Switched back to using garminconnect library functions for Readiness, Status, Respiration, Sleep Score, and Stress Durations for reliability.
-Removed unsupported fields. Retained garth for HRV and Weight.
+Garmin → Google Sheets Daily Rollup — v4.2.1
+Change: Removed logging module usage, reverted to print statements.
+Using garminconnect library functions for Readiness, Status, Respiration, Sleep Score, Stress Durations.
+Retained garth for HRV and Weight.
 """
 
 from datetime import date, datetime, timedelta, timezone
 from collections import defaultdict, Counter
 import os, sys, time, calendar, re, json, base64, tarfile, io
 from dotenv import load_dotenv
-from garminconnect import Garmin # Use this more now
-import garth # Still used for HRV, Weight, and underlying auth
+from garminconnect import Garmin
+import garth
 from zoneinfo import ZoneInfo
 
 # Google Sheets
 import gspread
 from google.oauth2 import service_account
 
-# Configure logging
-# CHANGED: Added logging setup
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-# --- END CHANGE ---
+# REMOVED: import logging
+# REMOVED: logging.basicConfig(...)
 
 
 # -----------------------------
@@ -34,11 +33,10 @@ def get_local_tz():
     except Exception: return timezone.utc
 
 # -----------------------------
-# Helpers (Unchanged except seconds_to_hours)
+# Helpers (Unchanged)
 # -----------------------------
 def iso_date(d: date) -> str: return d.isoformat()
 def today_local() -> date: tz = get_local_tz(); return datetime.now(tz).date()
-from datetime import date, timedelta # Make sure timedelta is imported
 
 def daterange(start: date, end_exclusive: date):
     d = start
@@ -69,13 +67,10 @@ def _first_present(dct, keys, default=None):
     return default
 
 def seconds_to_hours(seconds):
-    """Safely converts seconds (int) to hours (float, 2 decimal places)."""
     if isinstance(seconds, (int, float)): return round(seconds / 3600.0, 2)
     return ""
 
-# CHANGED: Added try_get helper
 def try_get(data, keys, default=""):
-    """Safely traverses nested dictionaries."""
     if data is None: return default
     temp = data
     try:
@@ -84,7 +79,6 @@ def try_get(data, keys, default=""):
             temp = temp[key]
         return temp if temp is not None else default
     except (KeyError, TypeError, IndexError): return default
-# --- END CHANGE ---
 
 
 # -----------------------------
@@ -106,8 +100,8 @@ def login_to_garmin():
     garmin_email = os.getenv("GARMIN_EMAIL"); garmin_password = os.getenv("GARMIN_PASSWORD")
     token_store = os.getenv("GARMIN_TOKEN_STORE", "~/.garmin_tokens"); token_store = os.path.expanduser(token_store).rstrip("/")
     mfa_code = os.getenv("GARMIN_MFA_CODE")
-    if not garmin_email or not garmin_password: print("Missing GARMIN_EMAIL or GARMIN_PASSWORD"); sys.exit(1)
-    if os.path.exists(token_store) and not os.path.isdir(token_store): print(f"[garmin] GARMIN_TOKEN_STORE points to a file: {token_store}. Expected a directory."); sys.exit(1)
+    if not garmin_email or not garmin_password: print("ERROR: Missing GARMIN_EMAIL or GARMIN_PASSWORD"); sys.exit(1) # CHANGED: Added ERROR prefix
+    if os.path.exists(token_store) and not os.path.isdir(token_store): print(f"ERROR: GARMIN_TOKEN_STORE points to a file: {token_store}. Expected a directory."); sys.exit(1) # CHANGED: Added ERROR prefix
     _maybe_restore_token_dir_from_tgz(token_store)
     try: garth.resume(token_store); print(f"[garmin] Resumed tokens from {token_store} for garth")
     except Exception as resume_err:
@@ -118,18 +112,18 @@ def login_to_garmin():
             if client_state: garth.resume_login(client_state, mfa_code)
         else: garth.login(garmin_email, garmin_password)
         _ensure_dir(token_store); garth.save(token_store); print(f"[garmin] Saved new garth tokens to {token_store}")
-    g = Garmin(garmin_email, garmin_password) # Initialize WITHOUT token store here
+    g = Garmin(garmin_email, garmin_password)
     try:
-        g.login(tokenstore=token_store) # Pass token store path HERE
+        g.login(tokenstore=token_store)
         print(f"[garmin] Garmin object login successful using tokens from {token_store}")
         return g, token_store
     except Exception as e:
-        print(f"[garmin] Garmin object login error: {e}")
+        print(f"ERROR: Garmin object login error: {e}") # CHANGED: Added ERROR prefix
         try: g.login(); print(f"[garmin] Garmin object login successful on fallback."); return g, token_store
-        except Exception as e2: print(f"[garmin] Full login error: {e2}"); sys.exit(1)
+        except Exception as e2: print(f"ERROR: Full login error: {e2}"); sys.exit(1) # CHANGED: Added ERROR prefix
 
 # -----------------------------
-# Column map (Unchanged from v4.1.0)
+# Column map (Unchanged)
 # -----------------------------
 P = {
     "Date": "Date", "weekday": "weekday", "WeightLb": "Weight (lb)", "TrainingReadiness": "Training Readiness (0-100)",
@@ -151,7 +145,7 @@ P = {
 }
 
 # -----------------------------
-# SHEET_HEADERS (Unchanged from v4.1.0)
+# SHEET_HEADERS (Unchanged)
 # -----------------------------
 SHEET_HEADERS = [
     P["Date"], P["weekday"], P["WeightLb"], P["TrainingReadiness"], P["TrainingStatus"], P["RestingHR"], P["HRV"],
@@ -174,9 +168,9 @@ def _gspread_client():
     if file_path and os.path.exists(file_path): creds = service_account.Credentials.from_service_account_file(file_path, scopes=["https://www.googleapis.com/auth/spreadsheets"])
     elif json_inline:
         try: data = json.loads(json_inline)
-        except Exception as e: print("GOOGLE_SERVICE_ACCOUNT_JSON could not be parsed:", e); sys.exit(1)
+        except Exception as e: print("ERROR: GOOGLE_SERVICE_ACCOUNT_JSON could not be parsed:", e); sys.exit(1) # CHANGED: Added ERROR prefix
         creds = service_account.Credentials.from_service_account_info(data, scopes=["https://www.googleapis.com/auth/spreadsheets"])
-    else: print("Provide GOOGLE_SERVICE_ACCOUNT_FILE or GOOGLE_SERVICE_ACCOUNT_JSON"); sys.exit(1)
+    else: print("ERROR: Provide GOOGLE_SERVICE_ACCOUNT_FILE or GOOGLE_SERVICE_ACCOUNT_JSON"); sys.exit(1) # CHANGED: Added ERROR prefix
     return gspread.authorize(creds)
 
 def _open_or_create_worksheet(gc, spreadsheet_id: str, title: str):
@@ -207,10 +201,7 @@ def _read_date_index(ws):
 # Garmin data fetchers
 # -----------------------------
 
-# CHANGED: Removed fetch_steps_for_date (will use api.get_stats)
-# --- END CHANGE ---
-
-# Unchanged from original
+# Unchanged
 def _format_score_value(source: dict, key_src: str):
     if not isinstance(source, dict): return None
     item = source.get(key_src) or {};
@@ -221,7 +212,7 @@ def _format_score_value(source: dict, key_src: str):
     score_str = "None" if score is None else str(score)
     return f"{score_str}({qual})" if qual is not None else score_str
 
-# Unchanged from original (still gets overall_score_value)
+# Unchanged
 def _sleep_scores_from(data: dict) -> dict:
     scores = {}; source = data.get("sleepScores") or data.get("dailySleepDTO", {}).get("sleepScores") or {}
     def qual(key): v = source.get(key) or {}; return v.get("qualifierKey") or v.get("qualifier") or None
@@ -234,7 +225,7 @@ def _sleep_scores_from(data: dict) -> dict:
     scores["overall_score_value"] = (source.get("overall") or {}).get("score")
     return scores
 
-# Unchanged from original
+# Unchanged
 def fetch_sleep_for_date(g: Garmin, d: date):
     try:
         data = g.get_sleep_data(iso_date(d)) or {}; daily = data.get("dailySleepDTO") or {}
@@ -250,16 +241,14 @@ def fetch_sleep_for_date(g: Garmin, d: date):
             "start_local": start_local_iso, "end_local": end_local_iso, "scores": scores,
         }
     except Exception as e:
-        # CHANGED: Add logging
-        logging.warning(f"Could not fetch sleep data for {iso_date(d)}: {e}")
+        print(f"WARNING: Could not fetch sleep data for {iso_date(d)}: {e}") # CHANGED: Replaced logging
         return {}
 
-# Unchanged from original
+# Unchanged
 def fetch_activities_bulk(g: Garmin, start_d: date):
     try: acts = g.get_activities(0, 500) or []
     except Exception as e:
-        # CHANGED: Add logging
-        logging.warning(f"Could not fetch activities bulk: {e}")
+        print(f"WARNING: Could not fetch activities bulk: {e}") # CHANGED: Replaced logging
         acts = []
     keep = []
     for a in acts:
@@ -269,7 +258,7 @@ def fetch_activities_bulk(g: Garmin, start_d: date):
         except Exception: pass
     return keep
 
-# Unchanged from original
+# Unchanged
 def aggregate_activities_by_date(activities):
     by_date = defaultdict(lambda: {"count":0,"dist_mi":0.0,"dur_min":0.0,"cal":0.0, "names": [], "types": [], "te": [], "ae": [], "ane": []})
     for a in activities:
@@ -295,7 +284,7 @@ def aggregate_activities_by_date(activities):
         v["ae"] = " ".join(v["ae"]); v["ane"] = " ".join(v["ane"])
     return by_date
 
-# Unchanged from original
+# Unchanged
 def map_intensity_last_n(n_days=50):
     out = {};
     try:
@@ -306,11 +295,10 @@ def map_intensity_last_n(n_days=50):
             if mod is not None or vig is not None: total = (mod or 0) + 2 * (vig or 0)
             out[d] = {"total": total, "mod": mod, "vig": vig}
     except Exception as e:
-        # CHANGED: Add logging
-        logging.warning(f"Could not fetch intensity map: {e}")
+        print(f"WARNING: Could not fetch intensity map: {e}") # CHANGED: Replaced logging
     return out
 
-# Unchanged from original
+# Unchanged
 def map_hrv_last_n(n_days=50):
     out = {}
     try:
@@ -319,8 +307,7 @@ def map_hrv_last_n(n_days=50):
             d = r.calendar_date.isoformat();
             out[d] = getattr(r, "last_night_avg", None) or getattr(r, "weekly_avg", None)
     except Exception as e:
-        # CHANGED: Add logging
-        logging.warning(f"Could not fetch HRV map: {e}")
+        print(f"WARNING: Could not fetch HRV map: {e}") # CHANGED: Replaced logging
     return out
 
 
@@ -333,17 +320,14 @@ def main():
     tz = get_local_tz(); print(f"[tz] Using timezone: {tz}"); print(f"[tz] Today in tz: {datetime.now(tz).date()}")
 
     spreadsheet_id = os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID")
-    if not spreadsheet_id: print("Missing GOOGLE_SHEETS_SPREADSHEET_ID"); sys.exit(1)
-    # CHANGED: Use correct env var name matching YAML file
-    worksheet_title = os.getenv("GOOGLE_SHEETS_WORKSHEET_TITLE2", "Garmin Daily Expanded") # Default if not set
-    # --- END CHANGE ---
-
+    if not spreadsheet_id: print("ERROR: Missing GOOGLE_SHEETS_SPREADSHEET_ID"); sys.exit(1) # CHANGED: Added ERROR prefix
+    worksheet_title = os.getenv("GOOGLE_SHEETS_WORKSHEET_TITLE2", "Garmin Daily Expanded")
 
     end_d_inclusive = today_local() if os.getenv('INCLUDE_TODAY', '1') != '0' else today_local() - timedelta(days=1)
-    window_days = int(os.getenv('WINDOW_DAYS', '5'))
+    window_days = int(os.getenv('WINDOW_DAYS', '14')) # CHANGED: Default back to 14
     start_d = end_d_inclusive - timedelta(days=window_days - 1)
 
-    g, token_store = login_to_garmin() # 'g' is the Garmin object
+    g, token_store = login_to_garmin()
 
     gc = _gspread_client()
     ws = _open_or_create_worksheet(gc, spreadsheet_id, worksheet_title)
@@ -360,47 +344,45 @@ def main():
 
     for d in daterange(start_d, end_d_inclusive + timedelta(days=1)):
         d_iso = iso_date(d)
-        logging.info(f"Processing date: {d_iso}") # Use logging
+        print(f"Processing date: {d_iso}") # CHANGED: Replaced logging
 
         # --- Fetch Data using Garmin object (api) ---
-        # CHANGED: Fetch data using the 'g' (Garmin) object functions
         stats = {}
-        try: stats = g.get_stats(d_iso) or {} # Used for Steps, Goal, Walk Dist
-        except Exception as e: logging.warning(f"Could not fetch stats for {d_iso}: {e}")
+        try: stats = g.get_stats(d_iso) or {}
+        except Exception as e: print(f"WARNING: Could not fetch stats for {d_iso}: {e}") # CHANGED: Replaced logging
 
-        sleep = fetch_sleep_for_date(g, d) or {} # Gets RHR as well
+        sleep = fetch_sleep_for_date(g, d) or {}
 
         stress = {}
-        try: stress = g.get_stress_data(d_iso) or {} # Used for Avg/Max and Durations
-        except Exception as e: logging.warning(f"Could not fetch stress for {d_iso}: {e}")
+        try: stress = g.get_stress_data(d_iso) or {}
+        except Exception as e: print(f"WARNING: Could not fetch stress for {d_iso}: {e}") # CHANGED: Replaced logging
 
         bb = {}
-        try: bb = g.get_body_battery(d_iso) or [] # Returns a list of readings
-        except Exception as e: logging.warning(f"Could not fetch body battery for {d_iso}: {e}")
+        try: bb = g.get_body_battery(d_iso) or []
+        except Exception as e: print(f"WARNING: Could not fetch body battery for {d_iso}: {e}") # CHANGED: Replaced logging
 
         readiness = {}
         try: readiness = g.get_training_readiness(d_iso) or {}
-        except Exception as e: logging.warning(f"Could not fetch readiness for {d_iso}: {e}")
+        except Exception as e: print(f"WARNING: Could not fetch readiness for {d_iso}: {e}") # CHANGED: Replaced logging
 
         training_status = {}
         try: training_status = g.get_training_status(d_iso) or {}
-        except Exception as e: logging.warning(f"Could not fetch training status for {d_iso}: {e}")
+        except Exception as e: print(f"WARNING: Could not fetch training status for {d_iso}: {e}") # CHANGED: Replaced logging
 
         daily_resp = {}
         try: daily_resp = g.get_respiration_data(d_iso) or {}
-        except Exception as e: logging.warning(f"Could not fetch respiration for {d_iso}: {e}")
+        except Exception as e: print(f"WARNING: Could not fetch respiration for {d_iso}: {e}") # CHANGED: Replaced logging
 
-        # Fetch using garth (still reliable for these)
-        hrv = hrv_map.get(d_iso) # Already fetched
+        hrv = hrv_map.get(d_iso)
 
         weight_lb = None
         try:
             w = garth.WeightData.get(d_iso)
             if w: grams = getattr(w, "weight", None);
             if grams is not None: weight_lb = round((grams / 1000) * 2.20462, 2)
-        except Exception as e: logging.warning(f"Could not fetch Weight for {d_iso}: {e}")
+        except Exception as e: print(f"WARNING: Could not fetch Weight for {d_iso}: {e}") # CHANGED: Replaced logging
 
-        inten = intensity_map.get(d_iso, {}) # Already fetched
+        inten = intensity_map.get(d_iso, {})
         intensity_total = inten.get("total"); intensity_mod = inten.get("mod"); intensity_vig = inten.get("vig")
 
         act = act_by_date.get(d_iso, {"count":0,"dist_mi":0.0,"dur_min":0.0,"cal":0, "names":"", "types":"", "te":"", "ae":"", "ane":"", "primary":"", "types_unique":""})
@@ -408,26 +390,24 @@ def main():
 
         # --- Calculate Body Battery Avg/Min/Max ---
         bb_avg = bb_min = bb_max = None
-        if bb: # bb is a list of dictionaries like [{'charged': 4, 'bodyBatteryValue': 21, ...}, ...]
-            values = [reading.get('bodyBatteryValue') for reading in bb if 'bodyBatteryValue' in reading]
+        if bb:
+            values = [reading.get('bodyBatteryValue') for reading in bb if 'bodyBatteryValue' in reading and reading.get('bodyBatteryValue') is not None] # CHANGED: Added None check
             if values:
                 bb_avg = round(sum(values) / len(values))
                 bb_min = min(values)
-                # Max needs to be calculated manually if not directly available
-                bb_max = max(values) # Simple max of readings for the day
+                bb_max = max(values)
 
         # --- Populate props dictionary ---
-        # CHANGED: Map fields using data fetched from 'g' (Garmin object) and garth
         props = {
             P["Date"]: d_iso,
             P["weekday"]: calendar.day_name[d.weekday()],
             P["WeightLb"]: weight_lb,
-            P["TrainingReadiness"]: try_get(readiness, ['trainingReadiness'], ""), # From g.get_training_readiness
-            P["TrainingStatus"]: try_get(training_status, ['trainingStatus'], ""), # From g.get_training_status
-            P["RestingHR"]: sleep.get("resting_hr"), # From fetch_sleep_for_date
-            P["HRV"]: hrv, # From hrv_map (garth)
-            P["RespirationRateAvg"]: try_get(daily_resp, ['avgOverallBreathsPerMin'], ""), # From g.get_respiration_data
-            P["SleepScoreOverall"]: (sleep.get("scores", {}) or {}).get("overall_score_value"), # From fetch_sleep_for_date
+            P["TrainingReadiness"]: try_get(readiness, ['trainingReadiness'], ""),
+            P["TrainingStatus"]: try_get(training_status, ['trainingStatus'], ""),
+            P["RestingHR"]: sleep.get("resting_hr"),
+            P["HRV"]: hrv,
+            P["RespirationRateAvg"]: try_get(daily_resp, ['avgOverallBreathsPerMin'], ""),
+            P["SleepScoreOverall"]: (sleep.get("scores", {}) or {}).get("overall_score_value"),
             P["SleepTotalH"]: sleep.get("total_h"),
             P["SleepLightH"]: sleep.get("light_h"),
             P["SleepDeepH"]: sleep.get("deep_h"),
@@ -443,20 +423,20 @@ def main():
             P["SS_restlessness"]: (sleep.get("scores", {}) or {}).get("restlessness"),
             P["SS_light_percentage"]: (sleep.get("scores", {}) or {}).get("light_percentage_fmt"),
             P["SS_deep_percentage"]: (sleep.get("scores", {}) or {}).get("deep_percentage_fmt"),
-            P["StressAvg"]: try_get(stress, ['averageStressLevel'], ""), # From g.get_stress_data
-            P["StressMax"]: try_get(stress, ['maxStressLevel'], ""), # From g.get_stress_data
-            P["StressRestH"]: seconds_to_hours(try_get(stress, ['restStressDurationInSeconds'])), # From g.get_stress_data
-            P["StressLowH"]: seconds_to_hours(try_get(stress, ['lowStressDurationInSeconds'])), # From g.get_stress_data
-            P["StressMediumH"]: seconds_to_hours(try_get(stress, ['mediumStressDurationInSeconds'])), # From g.get_stress_data
-            P["StressHighH"]: seconds_to_hours(try_get(stress, ['highStressDurationInSeconds'])), # From g.get_stress_data
-            P["StressUncatH"]: seconds_to_hours(try_get(stress, ['uncategorizedStressDurationInSeconds'])), # From g.get_stress_data
-            P["BodyBatteryAvg"]: bb_avg, # Calculated from g.get_body_battery list
-            P["BodyBatteryMax"]: bb_max, # Calculated from g.get_body_battery list
-            P["BodyBatteryMin"]: bb_min, # Calculated from g.get_body_battery list
-            P["Steps"]: try_get(stats, ['totalSteps'], ""), # From g.get_stats
-            P["StepGoal"]: try_get(stats, ['stepGoal'], ""), # From g.get_stats
-            P["WalkDistanceMi"]: round((try_get(stats, ['totalDistanceMeters'], 0) or 0) / 1609.34, 2), # From g.get_stats
-            P["ActivityCount"]: act["count"], # From activities aggregation
+            P["StressAvg"]: try_get(stress, ['averageStressLevel'], ""),
+            P["StressMax"]: try_get(stress, ['maxStressLevel'], ""),
+            P["StressRestH"]: seconds_to_hours(try_get(stress, ['restStressDurationInSeconds'])),
+            P["StressLowH"]: seconds_to_hours(try_get(stress, ['lowStressDurationInSeconds'])),
+            P["StressMediumH"]: seconds_to_hours(try_get(stress, ['mediumStressDurationInSeconds'])),
+            P["StressHighH"]: seconds_to_hours(try_get(stress, ['highStressDurationInSeconds'])),
+            P["StressUncatH"]: seconds_to_hours(try_get(stress, ['uncategorizedStressDurationInSeconds'])),
+            P["BodyBatteryAvg"]: bb_avg,
+            P["BodyBatteryMax"]: bb_max,
+            P["BodyBatteryMin"]: bb_min,
+            P["Steps"]: try_get(stats, ['totalSteps'], ""),
+            P["StepGoal"]: try_get(stats, ['stepGoal'], ""),
+            P["WalkDistanceMi"]: round((try_get(stats, ['totalDistanceMeters'], 0) or 0) / 1609.34, 2),
+            P["ActivityCount"]: act["count"],
             P["ActivityDistanceMi"]: act["dist_mi"],
             P["ActivityDurationMin"]: act["dur_min"],
             P["ActivityCalories"]: act["cal"],
@@ -467,9 +447,9 @@ def main():
             P["ActTrainingEff"]: act.get("te", ""),
             P["ActAerobicEff"]: act.get("ae", ""),
             P["ActAnaerobicEff"]: act.get("ane", ""),
-            P["IntensityMin"]: intensity_total, # From intensity_map (garth)
-            P["IntensityMod"]: intensity_mod, # From intensity_map (garth)
-            P["IntensityVig"]: intensity_vig, # From intensity_map (garth)
+            P["IntensityMin"]: intensity_total,
+            P["IntensityMod"]: intensity_mod,
+            P["IntensityVig"]: intensity_vig,
         }
         # --- END Populate props ---
 
@@ -483,12 +463,9 @@ def main():
             try: last = len(ws.col_values(1)); date_index[d_iso] = last
             except Exception: pass
             appends += 1
-        time.sleep(0.1) # Increased sleep slightly
+        time.sleep(0.1)
 
-    # CHANGED: Use logging
-    logging.info(f"Done. Upserted {updates} updates; {appends} inserts into Google Sheets '{worksheet_title}'.")
-    # --- END CHANGE ---
-
+    print(f"Done. Upserted {updates} updates; {appends} inserts into Google Sheets '{worksheet_title}'.") # CHANGED: Replaced logging
 
 if __name__ == "__main__":
     main()
