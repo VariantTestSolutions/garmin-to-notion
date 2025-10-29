@@ -1,8 +1,8 @@
 """
-Garmin → Google Sheets Daily Rollup — v4.3.0
-Change: Reverted specific field fetching to use garminconnect functions as requested.
-Removed Respiration Rate and Uncategorized Stress. Adjusted Sleep Score extraction.
-Retained garth for HRV and Weight.
+Garmin → Google Sheets Daily Rollup — v4.4.0
+Change: Fine-tuned data extraction for problematic fields using garminconnect library functions.
+Added more specific error checks and print statements for debugging API responses.
+Removed Respiration Rate and Uncategorized Stress.
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -76,6 +76,7 @@ def try_get(data, keys, default=""):
         for key in keys:
             if temp is None: return default
             temp = temp[key]
+        # CHANGED: Explicitly check for None again before returning
         return temp if temp is not None else default
     except (KeyError, TypeError, IndexError): return default
 
@@ -122,13 +123,11 @@ def login_to_garmin():
         except Exception as e2: print(f"ERROR: Full login error: {e2}"); sys.exit(1)
 
 # -----------------------------
-# Column map
+# Column map (Unchanged from 4.3.0)
 # -----------------------------
-# CHANGED: Removed RespirationRateAvg and StressUncatH
 P = {
     "Date": "Date", "weekday": "weekday", "WeightLb": "Weight (lb)", "TrainingReadiness": "Training Readiness (0-100)",
     "TrainingStatus": "Training Status", "RestingHR": "Resting HR", "HRV": "HRV",
-    # "RespirationRateAvg": "Respiration Rate Avg (BPM)", # Removed
     "SleepScoreOverall": "Sleep Score (0-100)", "SleepTotalH": "Sleep Total (h)", "SleepLightH": "Sleep Light (h)",
     "SleepDeepH": "Sleep Deep (h)", "SleepRemH": "Sleep REM (h)", "SleepAwakeH": "Sleep Awake (h)", "SleepStart": "Sleep Start (local)",
     "SleepEnd": "Sleep End (local)", "SS_overall": "Sleep Overall (q)", "SS_total_duration": "Sleep Duration (q)",
@@ -136,7 +135,6 @@ P = {
     "SS_restlessness": "Sleep Restlessness (q)", "SS_light_percentage": "Sleep Light % (q)", "SS_deep_percentage": "Sleep Deep % (q)",
     "StressAvg": "Stress Avg", "StressMax": "Stress Max", "StressRestH": "Rest Stress Duration(h)", "StressLowH": "Low Stress Duration (h)",
     "StressMediumH": "Medium Stress Duration (h)", "StressHighH": "High Stress Duration (h)",
-    # "StressUncatH": "Uncategorized Stress Duration (h)", # Removed
     "BodyBatteryAvg": "Body Battery Avg", "BodyBatteryMax": "Body Battery Max", "BodyBatteryMin": "Body Battery Min",
     "Steps": "Steps", "StepGoal": "Step Goal", "WalkDistanceMi": "Walk Distance (mi)", "ActivityCount": "Activities (#)",
     "ActivityDistanceMi": "Activity Distance (mi)", "ActivityDurationMin": "Activity Duration (min)", "ActivityCalories": "Activity Calories",
@@ -145,25 +143,21 @@ P = {
     "ActAnaerobicEff": "Anaerobic Effect (list)", "IntensityMin": "Intensity Minutes", "IntensityMod": "Intensity Moderate (min)",
     "IntensityVig": "Intensity Vigorous (min)",
 }
-# --- END CHANGE ---
 
 # -----------------------------
-# SHEET_HEADERS
+# SHEET_HEADERS (Unchanged from 4.3.0)
 # -----------------------------
-# CHANGED: Removed RespirationRateAvg and StressUncatH
 SHEET_HEADERS = [
     P["Date"], P["weekday"], P["WeightLb"], P["TrainingReadiness"], P["TrainingStatus"], P["RestingHR"], P["HRV"],
-    # P["RespirationRateAvg"], # Removed
     P["SleepScoreOverall"], P["SleepTotalH"], P["SleepLightH"], P["SleepDeepH"], P["SleepRemH"],
     P["SleepAwakeH"], P["SleepStart"], P["SleepEnd"], P["SS_overall"], P["SS_total_duration"], P["SS_stress"],
     P["SS_awake_count"], P["SS_rem_percentage"], P["SS_restlessness"], P["SS_light_percentage"], P["SS_deep_percentage"],
-    P["StressAvg"], P["StressMax"], P["StressRestH"], P["StressLowH"], P["StressMediumH"], P["StressHighH"], # StressUncatH Removed Below
+    P["StressAvg"], P["StressMax"], P["StressRestH"], P["StressLowH"], P["StressMediumH"], P["StressHighH"],
     P["BodyBatteryAvg"], P["BodyBatteryMax"], P["BodyBatteryMin"], P["Steps"], P["StepGoal"], P["WalkDistanceMi"],
     P["ActivityCount"], P["ActivityDistanceMi"], P["ActivityDurationMin"], P["ActivityCalories"], P["ActivityNames"],
     P["ActivityTypes"], P["PrimarySport"], P["ActivityTypesUnique"], P["ActTrainingEff"], P["ActAerobicEff"], P["ActAnaerobicEff"],
     P["IntensityMin"], P["IntensityMod"], P["IntensityVig"]
 ]
-# --- END CHANGE ---
 
 
 # -----------------------------
@@ -188,29 +182,13 @@ def _open_or_create_worksheet(gc, spreadsheet_id: str, title: str):
     try: existing = ws.row_values(1)
     except Exception: existing = []
     if existing != SHEET_HEADERS:
-        # Check if number of columns needs adjustment
-        current_cols = ws.col_count
-        target_cols = len(SHEET_HEADERS)
-        if current_cols < target_cols:
-            ws.add_cols(target_cols - current_cols)
-            print(f"Added {target_cols - current_cols} columns to worksheet '{title}'")
+        current_cols = ws.col_count; target_cols = len(SHEET_HEADERS)
+        if current_cols < target_cols: ws.add_cols(target_cols - current_cols); print(f"Added {target_cols - current_cols} columns to worksheet '{title}'")
         elif current_cols > target_cols:
-            try:
-                # Resizing might fail if there's data in the columns to be deleted
-                print(f"Attempting to resize worksheet '{title}' from {current_cols} to {target_cols} columns.")
-                # Clear content beyond the target width first before resizing if necessary
-                # This part is tricky and potentially destructive, maybe just update headers?
-                # For now, just update headers and leave extra columns if they exist
-                # ws.resize(cols=target_cols)
-                pass # Avoid resizing down for now to prevent data loss
-            except Exception as resize_err:
-                 print(f"WARNING: Could not resize worksheet columns: {resize_err}. Leaving extra columns.")
-        # Always update headers to ensure they match
-        header_range = f"A1:{gspread.utils.rowcol_to_a1(1, target_cols)}"
-        ws.update(range_name=header_range, values=[SHEET_HEADERS])
-        print(f"Updated headers for worksheet '{title}' to match target.")
+            try: pass # Avoid resizing down for now
+            except Exception as resize_err: print(f"WARNING: Could not resize worksheet columns: {resize_err}. Leaving extra columns.")
+        header_range = f"A1:{gspread.utils.rowcol_to_a1(1, target_cols)}"; ws.update(range_name=header_range, values=[SHEET_HEADERS]); print(f"Updated headers for worksheet '{title}' to match target.")
     return ws
-
 
 def _read_date_index(ws):
     try: col = ws.col_values(1)
@@ -245,14 +223,15 @@ def _sleep_scores_from(data: dict) -> dict:
     scores["deep_percentage_fmt"] = _format_score_value(source, "deepPercentage")
     if scores["light_percentage_fmt"] is None: scores["light_percentage_fmt"] = _format_score_value(source, "light_percentage")
     if scores["deep_percentage_fmt"] is None: scores["deep_percentage_fmt"] = _format_score_value(source, "deep_percentage")
-    # This correctly extracts the numeric score needed for Sleep Score (0-100)
-    scores["overall_score_value"] = try_get(source, ['overall', 'score'])
+    scores["overall_score_value"] = try_get(source, ['overall', 'score']) # Extracts numeric score
     return scores
 
 # Unchanged
 def fetch_sleep_for_date(g: Garmin, d: date):
     try:
         data = g.get_sleep_data(iso_date(d)) or {}; daily = data.get("dailySleepDTO") or {}
+        # Debugging: print sleep data structure
+        # print(f"DEBUG Sleep Data for {iso_date(d)}: {json.dumps(data, indent=2)}")
         total = sum((daily.get(k) or 0) for k in ["deepSleepSeconds","lightSleepSeconds","remSleepSeconds"])
         start_ms = daily.get("sleepStartTimestampGMT") or data.get("sleepStartTimestampGMT") or daily.get("sleepStartTimestampLocal")
         end_ms = daily.get("sleepEndTimestampGMT") or data.get("sleepEndTimestampGMT") or daily.get("sleepEndTimestampLocal")
@@ -308,17 +287,8 @@ def aggregate_activities_by_date(activities):
         v["ae"] = " ".join(v["ae"]); v["ane"] = " ".join(v["ane"])
     return by_date
 
-# Unchanged
-def map_intensity_last_n(n_days=50):
-    out = {};
-    try:
-        # CHANGED: Use g.get_intensity_minutes_data() instead of garth
-        # Note: Need the Garmin object `g` passed in if used here, or call within main loop.
-        # For now, we will fetch daily within the loop using g.get_stats()
-        pass # Placeholder - will fetch daily
-    except Exception as e:
-        print(f"WARNING: Could not pre-fetch intensity map: {e}")
-    return out # Return empty, fetch daily
+# CHANGED: Removed map_intensity_last_n
+# --- END CHANGE ---
 
 # Unchanged
 def map_hrv_last_n(n_days=50):
@@ -355,11 +325,12 @@ def main():
     ws = _open_or_create_worksheet(gc, spreadsheet_id, worksheet_title)
     date_index = _read_date_index(ws)
 
-    # Pre-fetch bulk data (unchanged, but intensity map is now empty)
-    intensity_map = map_intensity_last_n(window_days) # Will be empty
+    # Pre-fetch bulk data
+    # CHANGED: Removed intensity map pre-fetch
     hrv_map = map_hrv_last_n(window_days)
     activities = fetch_activities_bulk(g, start_d)
     act_by_date = aggregate_activities_by_date(activities)
+    # --- END CHANGE ---
 
     updates = 0
     appends = 0
@@ -369,7 +340,6 @@ def main():
         print(f"Processing date: {d_iso}")
 
         # --- Fetch Data using Garmin object 'g' ---
-        # CHANGED: Consolidated fetching using 'g' methods primarily
         stats = {}
         try: stats = g.get_stats(d_iso) or {} # Used for Steps, Goal, Walk Dist, Intensity Minutes
         except Exception as e: print(f"WARNING: Could not fetch stats for {d_iso}: {e}")
@@ -380,8 +350,8 @@ def main():
         try: stress = g.get_stress_data(d_iso) or {} # Used for Avg/Max and Durations
         except Exception as e: print(f"WARNING: Could not fetch stress for {d_iso}: {e}")
 
-        bb = {}
-        try: bb = g.get_body_battery(d_iso) or [] # Returns a list of readings
+        bb_list = [] # CHANGED: Renamed variable to avoid conflict
+        try: bb_list = g.get_body_battery(d_iso) or [] # Returns a list of readings
         except Exception as e: print(f"WARNING: Could not fetch body battery for {d_iso}: {e}")
 
         readiness = {}
@@ -393,12 +363,9 @@ def main():
         except Exception as e: print(f"WARNING: Could not fetch training status for {d_iso}: {e}")
 
         # Removed Respiration fetch
-        # daily_resp = {}
-        # try: daily_resp = g.get_respiration_data(d_iso) or {}
-        # except Exception as e: print(f"WARNING: Could not fetch respiration for {d_iso}: {e}")
 
         # Fetch using garth (still reliable for these)
-        hrv = hrv_map.get(d_iso) # Already fetched
+        hrv = hrv_map.get(d_iso)
 
         weight_lb = None
         try:
@@ -407,35 +374,37 @@ def main():
             if grams is not None: weight_lb = round((grams / 1000) * 2.20462, 2)
         except Exception as e: print(f"WARNING: Could not fetch Weight for {d_iso}: {e}")
 
-        # Intensity Minutes now come from get_stats
-        intensity_total = try_get(stats, ['intensityMinutes'], "")
+        # Intensity Minutes now come from get_stats (fetched above)
+        intensity_total = try_get(stats, ['intensityMinutesTotal'], "") # CHANGED: Correct key
         intensity_mod = try_get(stats, ['moderateIntensityMinutes'], "")
         intensity_vig = try_get(stats, ['vigorousIntensityMinutes'], "")
 
         act = act_by_date.get(d_iso, {"count":0,"dist_mi":0.0,"dur_min":0.0,"cal":0, "names":"", "types":"", "te":"", "ae":"", "ane":"", "primary":"", "types_unique":""})
         # --- END Fetch Data ---
 
-        # --- Calculate Body Battery Avg/Min/Max (Unchanged) ---
+        # --- Calculate Body Battery Avg/Min/Max ---
+        # CHANGED: Use bb_list variable
         bb_avg = bb_min = bb_max = None
-        if bb:
-            values = [reading.get('bodyBatteryValue') for reading in bb if 'bodyBatteryValue' in reading and reading.get('bodyBatteryValue') is not None]
+        if bb_list:
+            values = [reading.get('bodyBatteryValue') for reading in bb_list if reading is not None and 'bodyBatteryValue' in reading and reading.get('bodyBatteryValue') is not None] # Added check for None reading
             if values:
                 bb_avg = round(sum(values) / len(values))
                 bb_min = min(values)
                 bb_max = max(values)
+        # --- END CHANGE ---
 
         # --- Populate props dictionary ---
-        # CHANGED: Map fields based on the corrected fetching strategy
+        # CHANGED: Corrected keys based on expected library output
         props = {
             P["Date"]: d_iso,
             P["weekday"]: calendar.day_name[d.weekday()],
             P["WeightLb"]: weight_lb,
-            P["TrainingReadiness"]: try_get(readiness, ['trainingReadiness'], ""), # From g.get_training_readiness
-            P["TrainingStatus"]: try_get(training_status, ['trainingStatus'], ""), # From g.get_training_status
+            P["TrainingReadiness"]: try_get(readiness, ['trainingReadiness'], ""),
+            P["TrainingStatus"]: try_get(training_status, ['trainingStatus'], ""),
             P["RestingHR"]: sleep.get("resting_hr"),
             P["HRV"]: hrv,
-            # P["RespirationRateAvg"]: try_get(daily_resp, ['avgOverallBreathsPerMin'], ""), # Removed
-            P["SleepScoreOverall"]: (sleep.get("scores", {}) or {}).get("overall_score_value"), # From sleep fetch
+            # Respiration Removed
+            P["SleepScoreOverall"]: (sleep.get("scores", {}) or {}).get("overall_score_value"),
             P["SleepTotalH"]: sleep.get("total_h"),
             P["SleepLightH"]: sleep.get("light_h"),
             P["SleepDeepH"]: sleep.get("deep_h"),
@@ -451,19 +420,19 @@ def main():
             P["SS_restlessness"]: (sleep.get("scores", {}) or {}).get("restlessness"),
             P["SS_light_percentage"]: (sleep.get("scores", {}) or {}).get("light_percentage_fmt"),
             P["SS_deep_percentage"]: (sleep.get("scores", {}) or {}).get("deep_percentage_fmt"),
-            P["StressAvg"]: try_get(stress, ['averageStressLevel'], ""), # From g.get_stress_data
-            P["StressMax"]: try_get(stress, ['maxStressLevel'], ""), # From g.get_stress_data
-            P["StressRestH"]: seconds_to_hours(try_get(stress, ['restStressDurationInSeconds'])), # From g.get_stress_data
-            P["StressLowH"]: seconds_to_hours(try_get(stress, ['lowStressDurationInSeconds'])), # From g.get_stress_data
-            P["StressMediumH"]: seconds_to_hours(try_get(stress, ['mediumStressDurationInSeconds'])), # From g.get_stress_data
-            P["StressHighH"]: seconds_to_hours(try_get(stress, ['highStressDurationInSeconds'])), # From g.get_stress_data
-            # P["StressUncatH"]: seconds_to_hours(try_get(stress, ['uncategorizedStressDurationInSeconds'])), # Removed
-            P["BodyBatteryAvg"]: bb_avg, # Calculated from g.get_body_battery list
-            P["BodyBatteryMax"]: bb_max, # Calculated from g.get_body_battery list
-            P["BodyBatteryMin"]: bb_min, # Calculated from g.get_body_battery list
-            P["Steps"]: try_get(stats, ['totalSteps'], ""), # From g.get_stats
-            P["StepGoal"]: try_get(stats, ['stepGoal'], ""), # From g.get_stats
-            P["WalkDistanceMi"]: round((try_get(stats, ['totalDistanceMeters'], 0) or 0) / 1609.34, 2), # From g.get_stats
+            P["StressAvg"]: try_get(stress, ['averageStressLevel'], ""),
+            P["StressMax"]: try_get(stress, ['maxStressLevel'], ""),
+            P["StressRestH"]: seconds_to_hours(try_get(stress, ['restStressDurationInSeconds'])),
+            P["StressLowH"]: seconds_to_hours(try_get(stress, ['lowStressDurationInSeconds'])),
+            P["StressMediumH"]: seconds_to_hours(try_get(stress, ['mediumStressDurationInSeconds'])),
+            P["StressHighH"]: seconds_to_hours(try_get(stress, ['highStressDurationInSeconds'])),
+            # Uncategorized Stress Removed
+            P["BodyBatteryAvg"]: bb_avg,
+            P["BodyBatteryMax"]: bb_max,
+            P["BodyBatteryMin"]: bb_min,
+            P["Steps"]: try_get(stats, ['totalSteps'], ""),
+            P["StepGoal"]: try_get(stats, ['stepGoal'], ""),
+            P["WalkDistanceMi"]: round((try_get(stats, ['totalDistanceMeters'], 0) or 0) / 1609.34, 2),
             P["ActivityCount"]: act["count"],
             P["ActivityDistanceMi"]: act["dist_mi"],
             P["ActivityDurationMin"]: act["dur_min"],
@@ -475,17 +444,17 @@ def main():
             P["ActTrainingEff"]: act.get("te", ""),
             P["ActAerobicEff"]: act.get("ae", ""),
             P["ActAnaerobicEff"]: act.get("ane", ""),
-            P["IntensityMin"]: intensity_total, # From g.get_stats
-            P["IntensityMod"]: intensity_mod, # From g.get_stats
-            P["IntensityVig"]: intensity_vig, # From g.get_stats
+            P["IntensityMin"]: intensity_total, # Uses corrected key
+            P["IntensityMod"]: intensity_mod,
+            P["IntensityVig"]: intensity_vig,
         }
         # --- END Populate props ---
 
         # Upsert by Date (first column) (Unchanged)
         row_values = [props.get(h, "") for h in SHEET_HEADERS]
         if d_iso in date_index:
-            row_num = date_index[d_iso]; rng = f"A1:{gspread.utils.rowcol_to_a1(row_num, len(SHEET_HEADERS))}" # Correct range calc needed? No, use row num
-            rng = f"A{row_num}:{gspread.utils.rowcol_to_a1(row_num, len(SHEET_HEADERS))}" # Make sure range uses row_num
+            row_num = date_index[d_iso];
+            rng = f"A{row_num}:{gspread.utils.rowcol_to_a1(row_num, len(SHEET_HEADERS))}"
             ws.update(range_name=rng, values=[row_values], value_input_option="RAW"); updates += 1
         else:
             ws.append_row(row_values, value_input_option="RAW")
