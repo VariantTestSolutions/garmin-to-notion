@@ -190,11 +190,11 @@ SHEET_HEADERS = [
 # -----------------------------
 def _gspread_client():
     file_path = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE"); json_inline = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-    if file_path and os.path.exists(file_path): creds = service_account.Credentials.from_service_account_file(file_path, scopes=["https.www.googleapis.com/auth/spreadsheets"])
+    if file_path and os.path.exists(file_path): creds = service_account.Credentials.from_service_account_file(file_path, scopes=["https://www.googleapis.com/auth/spreadsheets"])
     elif json_inline:
         try: data = json.loads(json_inline)
         except Exception as e: print("ERROR: GOOGLE_SERVICE_ACCOUNT_JSON could not be parsed:", e); sys.exit(1)
-        creds = service_account.Credentials.from_service_account_info(data, scopes=["https.www.googleapis.com/auth/spreadsheets"])
+        creds = service_account.Credentials.from_service_account_info(data, scopes=["https://www.googleapis.com/auth/spreadsheets"])
     else: print("ERROR: Provide GOOGLE_SERVICE_ACCOUNT_FILE or GOOGLE_SERVICE_ACCOUNT_JSON"); sys.exit(1)
     return gspread.authorize(creds)
 
