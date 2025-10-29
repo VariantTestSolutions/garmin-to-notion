@@ -1,9 +1,7 @@
 """
-Garmin → Google Sheets Daily Rollup — v4.4.1
-Change: Corrected all data extraction keys based on raw API logs.
-Consolidated fetching to use g.get_stats() for Stress, Intensity, Steps, and BB Min/Max.
-Fixed Body Battery Avg calculation from g.get_body_battery().
-Removed Respiration Rate and Uncategorized Stress.
+Garmin → Google Sheets Daily Rollup — v4.4.3
+Change: Corrected Training Status and Sleep Score (0-100) extraction.
+No other changes.
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -123,12 +121,11 @@ def login_to_garmin():
         except Exception as e2: print(f"ERROR: Full login error: {e2}"); sys.exit(1)
 
 # -----------------------------
-# Column map (Removed Respiration and Uncategorized Stress)
+# Column map (Unchanged)
 # -----------------------------
 P = {
     "Date": "Date", "weekday": "weekday", "WeightLb": "Weight (lb)", "TrainingReadiness": "Training Readiness (0-100)",
     "TrainingStatus": "Training Status", "RestingHR": "Resting HR", "HRV": "HRV",
-    # "RespirationRateAvg": "Respiration Rate Avg (BPM)", # Removed
     "SleepScoreOverall": "Sleep Score (0-100)", "SleepTotalH": "Sleep Total (h)", "SleepLightH": "Sleep Light (h)",
     "SleepDeepH": "Sleep Deep (h)", "SleepRemH": "Sleep REM (h)", "SleepAwakeH": "Sleep Awake (h)", "SleepStart": "Sleep Start (local)",
     "SleepEnd": "Sleep End (local)", "SS_overall": "Sleep Overall (q)", "SS_total_duration": "Sleep Duration (q)",
@@ -136,7 +133,6 @@ P = {
     "SS_restlessness": "Sleep Restlessness (q)", "SS_light_percentage": "Sleep Light % (q)", "SS_deep_percentage": "Sleep Deep % (q)",
     "StressAvg": "Stress Avg", "StressMax": "Stress Max", "StressRestH": "Rest Stress Duration(h)", "StressLowH": "Low Stress Duration (h)",
     "StressMediumH": "Medium Stress Duration (h)", "StressHighH": "High Stress Duration (h)",
-    # "StressUncatH": "Uncategorized Stress Duration (h)", # Removed
     "BodyBatteryAvg": "Body Battery Avg", "BodyBatteryMax": "Body Battery Max", "BodyBatteryMin": "Body Battery Min",
     "Steps": "Steps", "StepGoal": "Step Goal", "WalkDistanceMi": "Walk Distance (mi)", "ActivityCount": "Activities (#)",
     "ActivityDistanceMi": "Activity Distance (mi)", "ActivityDurationMin": "Activity Duration (min)", "ActivityCalories": "Activity Calories",
@@ -147,11 +143,10 @@ P = {
 }
 
 # -----------------------------
-# SHEET_HEADERS (Removed Respiration and Uncategorized Stress)
+# SHEET_HEADERS (Unchanged)
 # -----------------------------
 SHEET_HEADERS = [
     P["Date"], P["weekday"], P["WeightLb"], P["TrainingReadiness"], P["TrainingStatus"], P["RestingHR"], P["HRV"],
-    # P["RespirationRateAvg"], # Removed
     P["SleepScoreOverall"], P["SleepTotalH"], P["SleepLightH"], P["SleepDeepH"], P["SleepRemH"],
     P["SleepAwakeH"], P["SleepStart"], P["SleepEnd"], P["SS_overall"], P["SS_total_duration"], P["SS_stress"],
     P["SS_awake_count"], P["SS_rem_percentage"], P["SS_restlessness"], P["SS_light_percentage"], P["SS_deep_percentage"],
@@ -216,7 +211,7 @@ def _format_score_value(source: dict, key_src: str):
     score_str = "None" if score is None else str(score)
     return f"{score_str}({qual})" if qual is not None else score_str
 
-# Unchanged (still gets overall_score_value)
+# CHANGED: Fixed key for overall_score_value
 def _sleep_scores_from(data: dict) -> dict:
     scores = {}; source = data.get("sleepScores") or data.get("dailySleepDTO", {}).get("sleepScores") or {}
     def qual(key): v = source.get(key) or {}; return v.get("qualifierKey") or v.get("qualifier") or None
@@ -227,11 +222,12 @@ def _sleep_scores_from(data: dict) -> dict:
     if scores["light_percentage_fmt"] is None: scores["light_percentage_fmt"] = _format_score_value(source, "light_percentage")
     if scores["deep_percentage_fmt"] is None: scores["deep_percentage_fmt"] = _format_score_value(source, "deep_percentage")
     # This correctly extracts the numeric score needed for Sleep Score (0-100)
-    scores["overall_score_value"] = try_get(source, ['overall', 'score'])
+    scores["overall_score_value"] = try_get(source, ['overall', 'value']) # CHANGED: Key is 'value', not 'score'
     return scores
+# --- END CHANGE ---
 
 # Unchanged
-def fetch_sleep_for_date(g: Garmin, d: date): # Removed first_day flag
+def fetch_sleep_for_date(g: Garmin, d: date):
     try:
         data = g.get_sleep_data(iso_date(d)) or {}
         daily = data.get("dailySleepDTO") or {}
@@ -333,24 +329,17 @@ def main():
     updates = 0
     appends = 0
     
-    # CHANGED: Removed first_day_processed flag
-    
     for d in daterange(start_d, end_d_inclusive + timedelta(days=1)):
         d_iso = iso_date(d)
         print(f"Processing date: {d_iso}")
 
-        # --- Fetch Data using Garmin object 'g' ---
-        
-        # CHANGED: Use g.get_stats() for most daily metrics
+        # --- Fetch Data ---
         stats = {}
         try: stats = g.get_stats(d_iso) or {}
         except Exception as e: print(f"WARNING: Could not fetch stats for {d_iso}: {e}")
-
-        # CHANGED: Use g.get_sleep_data()
+        
         sleep = fetch_sleep_for_date(g, d) or {} 
 
-        # CHANGED: Use g.get_stress_data() - The logs showed this was EMPTY, but g.get_stats() had the data.
-        # We will now pull stress data from the 'stats' object.
         stress = stats # Use the 'stats' object which contains stress data
         
         bb_list = []
@@ -361,13 +350,13 @@ def main():
         try: readiness = g.get_training_readiness(d_iso) or {}
         except Exception as e: print(f"WARNING: Could not fetch readiness for {d_iso}: {e}")
 
-        training_status = {}
-        try: training_status = g.get_training_status(d_iso) or {}
+        # CHANGED: Renamed variable for clarity
+        training_status_data = {} 
+        try: training_status_data = g.get_training_status(d_iso) or {}
         except Exception as e: print(f"WARNING: Could not fetch training status for {d_iso}: {e}")
-
+        
         # Removed Respiration fetch
 
-        # Fetch using garth (still reliable for these)
         hrv = hrv_map.get(d_iso)
 
         weight_lb = None
@@ -377,41 +366,53 @@ def main():
             if grams is not None: weight_lb = round((grams / 1000) * 2.20462, 2)
         except Exception as e: print(f"WARNING: Could not fetch Weight for {d_iso}: {e}")
 
-        # Intensity Minutes now come from get_stats (fetched above)
         intensity_mod = try_get(stats, ['moderateIntensityMinutes'], 0)
         intensity_vig = try_get(stats, ['vigorousIntensityMinutes'], 0)
-        # Calculate total: (Moderate * 1) + (Vigorous * 2)
         intensity_total = (intensity_mod or 0) + ((intensity_vig or 0) * 2)
-
 
         act = act_by_date.get(d_iso, {"count":0,"dist_mi":0.0,"dur_min":0.0,"cal":0, "names":"", "types":"", "te":"", "ae":"", "ane":"", "primary":"", "types_unique":""})
         # --- END Fetch Data ---
 
-        # --- Calculate Body Battery Avg/Min/Max ---
+        # --- Process complex structures ---
+
+        # CHANGED: New logic for Training Status based on logs
+        training_status_str = ""
+        try:
+            # The data is in: {"mostRecentTrainingStatus": {"latestTrainingStatusData": {"<device_id>": {"trainingStatusFeedbackPhrase": "MAINTAINING_1"}}}}
+            ts_data = try_get(training_status_data, ['mostRecentTrainingStatus', 'latestTrainingStatusData'])
+            if ts_data and isinstance(ts_data, dict):
+                first_device_key = list(ts_data.keys())[0] # Get the dynamic device ID
+                training_status_str = try_get(ts_data, [first_device_key, 'trainingStatusFeedbackPhrase'], "")
+        except Exception as e:
+            print(f"WARNING: Could not parse Training Status for {d_iso}: {e}")
+        # --- END CHANGE ---
+            
+        # CHANGED: Training Readiness - Get score from the *last* item in the list
+        readiness_score = try_get(readiness, [-1, 'score'], "")
+        # --- END CHANGE ---
+
+        # Unchanged Body Battery calculation logic
         bb_avg = bb_min_calc = bb_max_calc = None
-        # Use g.get_body_battery() response for calculating average
         if bb_list and isinstance(bb_list, list) and len(bb_list) > 0 and 'bodyBatteryValuesArray' in bb_list[0]:
             values = [pair[1] for pair in bb_list[0]['bodyBatteryValuesArray'] if pair and len(pair) > 1 and isinstance(pair[1], int) and pair[1] >= 0]
             if values:
                 bb_avg = round(sum(values) / len(values))
         
-        # Use g.get_stats() for Min/Max as it's more direct
         bb_min = try_get(stats, ['bodyBatteryLowestValue'], "")
         bb_max = try_get(stats, ['bodyBatteryHighestValue'], "")
 
 
         # --- Populate props dictionary ---
-        # CHANGED: Corrected all keys based on logs and requests
         props = {
             P["Date"]: d_iso,
             P["weekday"]: calendar.day_name[d.weekday()],
             P["WeightLb"]: weight_lb,
-            P["TrainingReadiness"]: try_get(readiness, [-1, 'score'], ""), # Get last score from list
-            P["TrainingStatus"]: try_get(training_status, ['trainingStatusFeedbackPhrase'], ""), # Get feedback phrase
+            P["TrainingReadiness"]: readiness_score, # Use calculated value
+            P["TrainingStatus"]: training_status_str, # Use calculated value
             P["RestingHR"]: sleep.get("resting_hr"),
             P["HRV"]: hrv,
             # Respiration Removed
-            P["SleepScoreOverall"]: (sleep.get("scores", {}) or {}).get("overall_score_value"),
+            P["SleepScoreOverall"]: (sleep.get("scores", {}) or {}).get("overall_score_value"), # Key was corrected in _sleep_scores_from
             P["SleepTotalH"]: sleep.get("total_h"),
             P["SleepLightH"]: sleep.get("light_h"),
             P["SleepDeepH"]: sleep.get("deep_h"),
@@ -469,7 +470,6 @@ def main():
             except Exception: pass
             appends += 1
         
-        # CHANGED: Removed first_day_processed flag
         time.sleep(0.1)
 
     print(f"Done. Upserted {updates} updates; {appends} inserts into Google Sheets '{worksheet_title}'.")
