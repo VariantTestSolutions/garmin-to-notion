@@ -43,6 +43,12 @@ def daterange(start: date, end_exclusive: date):
         yield d
         d += timedelta(days=1)
 
+def meters_to_feet(meters):
+    """Converts meters to feet, rounding to 0 decimal places."""
+    if isinstance(meters, (int, float)):
+        return round(meters * 3.28084, 0)
+    return ""
+
 def ms_to_local_iso(ms: int | None) -> str | None:
     if not ms: return None
     try:
