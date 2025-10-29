@@ -304,7 +304,7 @@ def main():
     g, token_store = login_to_garmin()
 
     gc = _gspread_client()
-    ws = _open_or_create_worksheet(gc, spreadsheet_id, worksheet__title)
+    ws = _open_or_create_worksheet(gc, spreadsheet_id, worksheet_title)
     date_index = _read_date_index(ws)
 
     # Pre-fetch bulk data
