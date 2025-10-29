@@ -1,7 +1,12 @@
 """
-Garmin → Google Sheets Daily Rollup — v4.4.3
-Change: Corrected Training Status and Sleep Score (0-100) extraction.
-No other changes.
+Garmin → Google Sheets Daily Rollup — v4.5.0
+Change: Added 17 new fields as requested by user.
+- Uses g.get_stats() for Total Calories, Stress Description, Avg Pulse Ox.
+- Uses g.get_sleep_data() for Sleep Feedback/Insight.
+- Uses g.get_training_readiness() for readiness factors (recovery time, etc).
+- Uses g.get_training_status() for VO2 Max, training loads, and acclimation.
+- Created meters_to_feet() helper function.
+- Updated P dict and SHEET_HEADERS to new 65-column format.
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -31,7 +36,7 @@ def get_local_tz():
     except Exception: return timezone.utc
 
 # -----------------------------
-# Helpers (Unchanged)
+# Helpers
 # -----------------------------
 def iso_date(d: date) -> str: return d.isoformat()
 def today_local() -> date: tz = get_local_tz(); return datetime.now(tz).date()
@@ -78,6 +83,14 @@ def try_get(data, keys, default=""):
         return temp if temp is not None else default
     except (KeyError, TypeError, IndexError): return default
 
+# CHANGED: Added meters_to_feet helper function
+def meters_to_feet(meters):
+    """Converts meters to feet, rounding to 0 decimal places."""
+    if isinstance(meters, (int, float)):
+        return round(meters * 3.28084, 0)
+    return ""
+# --- END CHANGE ---
+
 
 # -----------------------------
 # Garmin login (CI-safe) (Unchanged)
@@ -121,41 +134,55 @@ def login_to_garmin():
         except Exception as e2: print(f"ERROR: Full login error: {e2}"); sys.exit(1)
 
 # -----------------------------
-# Column map (Unchanged)
+# Column map
 # -----------------------------
+# CHANGED: Added all 17 new field keys
 P = {
     "Date": "Date", "weekday": "weekday", "WeightLb": "Weight (lb)", "TrainingReadiness": "Training Readiness (0-100)",
-    "TrainingStatus": "Training Status", "RestingHR": "Resting HR", "HRV": "HRV",
-    "SleepScoreOverall": "Sleep Score (0-100)", "SleepTotalH": "Sleep Total (h)", "SleepLightH": "Sleep Light (h)",
-    "SleepDeepH": "Sleep Deep (h)", "SleepRemH": "Sleep REM (h)", "SleepAwakeH": "Sleep Awake (h)", "SleepStart": "Sleep Start (local)",
-    "SleepEnd": "Sleep End (local)", "SS_overall": "Sleep Overall (q)", "SS_total_duration": "Sleep Duration (q)",
-    "SS_stress": "Sleep Stress (q)", "SS_awake_count": "Sleep Awake Count (q)", "SS_rem_percentage": "Sleep REM % (q)",
-    "SS_restlessness": "Sleep Restlessness (q)", "SS_light_percentage": "Sleep Light % (q)", "SS_deep_percentage": "Sleep Deep % (q)",
-    "StressAvg": "Stress Avg", "StressMax": "Stress Max", "StressRestH": "Rest Stress Duration(h)", "StressLowH": "Low Stress Duration (h)",
-    "StressMediumH": "Medium Stress Duration (h)", "StressHighH": "High Stress Duration (h)",
+    "TrainingStatus": "Training Status", "LoadFocus": "Load Focus", "RestingHR": "Resting HR", "HRV": "HRV",
+    "HRVFactorFeedback": "HRV Factor Feedback", "VO2MaxValue": "vo2 Max Value", "AveragePulseOx": "Average Pulse Ox",
+    "AcuteLoad": "7 Day (Acute) Training Load", "ChronicLoad": "28 Day (Chronic) Training Load", "ACWR_Status": "Acute to Chronic Workload Ratio",
+    "RecoveryTime": "Recovery Time", "RecoveryFactorFeedback": "Recovery Factor Feedback", "TotalCalories": "Total Calories",
+    "AcclimationFt": "Acclimation (ft)", "HeatAcclimation": "Heat acclimation",
     "BodyBatteryAvg": "Body Battery Avg", "BodyBatteryMax": "Body Battery Max", "BodyBatteryMin": "Body Battery Min",
-    "Steps": "Steps", "StepGoal": "Step Goal", "WalkDistanceMi": "Walk Distance (mi)", "ActivityCount": "Activities (#)",
-    "ActivityDistanceMi": "Activity Distance (mi)", "ActivityDurationMin": "Activity Duration (min)", "ActivityCalories": "Activity Calories",
-    "ActivityNames": "Activity Names", "ActivityTypes": "Activity Types", "PrimarySport": "primary_sport",
-    "ActivityTypesUnique": "activity_types_unique", "ActTrainingEff": "Training Effect (list)", "ActAerobicEff": "Aerobic Effect (list)",
-    "ActAnaerobicEff": "Anaerobic Effect (list)", "IntensityMin": "Intensity Minutes", "IntensityMod": "Intensity Moderate (min)",
-    "IntensityVig": "Intensity Vigorous (min)",
+    "Steps": "Steps", "StepGoal": "Step Goal", "WalkDistanceMi": "Walk Distance (mi)",
+    "SleepScoreOverall": "Sleep Score (0-100)", "SleepScoreFeedback": "Sleep Score Feedback", "SleepFactorFeedback": "Sleep Factor Feedback",
+    "SleepScoreInsight": "Sleep Score Insight", "StressDescription": "Stress Description", "StressFactorFeedback": "Stress Factor Feedback",
+    "SS_overall": "Sleep Overall (q)", "SS_total_duration": "Sleep Duration (q)", "SS_stress": "Sleep Stress (q)",
+    "SS_awake_count": "Sleep Awake Count (q)", "SS_rem_percentage": "Sleep REM % (q)", "SS_restlessness": "Sleep Restlessness (q)",
+    "SS_light_percentage": "Sleep Light % (q)", "SS_deep_percentage": "Sleep Deep % (q)",
+    "SleepTotalH": "Sleep Total (h)", "SleepLightH": "Sleep Light (h)", "SleepDeepH": "Sleep Deep (h)",
+    "SleepRemH": "Sleep REM (h)", "SleepAwakeH": "Sleep Awake (h)", "SleepStart": "Sleep Start (local)",
+    "SleepEnd": "Sleep End (local)", "StressAvg": "Stress Avg", "StressMax": "Stress Max",
+    "StressRestH": "Rest Stress Duration(h)", "StressLowH": "Low Stress Duration (h)",
+    "StressMediumH": "Medium Stress Duration (h)", "StressHighH": "High Stress Duration (h)",
+    "ActivityCount": "Activities (#)", "ActivityDistanceMi": "Activity Distance (mi)", "ActivityDurationMin": "Activity Duration (min)",
+    "ActivityCalories": "Activity Calories", "IntensityMin": "Intensity Minutes", "IntensityMod": "Intensity Moderate (min)",
+    "IntensityVig": "Intensity Vigorous (min)", "ActivityNames": "Activity Names", "ActivityTypes": "Activity Types",
+    "PrimarySport": "primary_sport", "ActivityTypesUnique": "activity_types_unique", "ActTrainingEff": "Training Effect (list)",
+    "ActAerobicEff": "Aerobic Effect (list)", "ActAnaerobicEff": "Anaerobic Effect (list)",
 }
+# --- END CHANGE ---
 
 # -----------------------------
-# SHEET_HEADERS (Unchanged)
+# SHEET_HEADERS
 # -----------------------------
+# CHANGED: Replaced with the new 65-column header list
 SHEET_HEADERS = [
-    P["Date"], P["weekday"], P["WeightLb"], P["TrainingReadiness"], P["TrainingStatus"], P["RestingHR"], P["HRV"],
-    P["SleepScoreOverall"], P["SleepTotalH"], P["SleepLightH"], P["SleepDeepH"], P["SleepRemH"],
-    P["SleepAwakeH"], P["SleepStart"], P["SleepEnd"], P["SS_overall"], P["SS_total_duration"], P["SS_stress"],
-    P["SS_awake_count"], P["SS_rem_percentage"], P["SS_restlessness"], P["SS_light_percentage"], P["SS_deep_percentage"],
-    P["StressAvg"], P["StressMax"], P["StressRestH"], P["StressLowH"], P["StressMediumH"], P["StressHighH"],
+    P["Date"], P["weekday"], P["WeightLb"], P["TrainingReadiness"], P["TrainingStatus"], P["LoadFocus"], P["RestingHR"], P["HRV"],
+    P["HRVFactorFeedback"], P["VO2MaxValue"], P["AveragePulseOx"], P["AcuteLoad"], P["ChronicLoad"], P["ACWR_Status"],
+    P["RecoveryTime"], P["RecoveryFactorFeedback"], P["TotalCalories"], P["AcclimationFt"], P["HeatAcclimation"],
     P["BodyBatteryAvg"], P["BodyBatteryMax"], P["BodyBatteryMin"], P["Steps"], P["StepGoal"], P["WalkDistanceMi"],
-    P["ActivityCount"], P["ActivityDistanceMi"], P["ActivityDurationMin"], P["ActivityCalories"], P["ActivityNames"],
-    P["ActivityTypes"], P["PrimarySport"], P["ActivityTypesUnique"], P["ActTrainingEff"], P["ActAerobicEff"], P["ActAnaerobicEff"],
-    P["IntensityMin"], P["IntensityMod"], P["IntensityVig"]
+    P["SleepScoreOverall"], P["SleepScoreFeedback"], P["SleepFactorFeedback"], P["SleepScoreInsight"],
+    P["StressDescription"], P["StressFactorFeedback"], P["SS_overall"], P["SS_total_duration"], P["SS_stress"],
+    P["SS_awake_count"], P["SS_rem_percentage"], P["SS_restlessness"], P["SS_light_percentage"], P["SS_deep_percentage"],
+    P["SleepTotalH"], P["SleepLightH"], P["SleepDeepH"], P["SleepRemH"], P["SleepAwakeH"], P["SleepStart"], P["SleepEnd"],
+    P["StressAvg"], P["StressMax"], P["StressRestH"], P["StressLowH"], P["StressMediumH"], P["StressHighH"],
+    P["ActivityCount"], P["ActivityDistanceMi"], P["ActivityDurationMin"], P["ActivityCalories"], P["IntensityMin"],
+    P["IntensityMod"], P["IntensityVig"], P["ActivityNames"], P["ActivityTypes"], P["PrimarySport"],
+    P["ActivityTypesUnique"], P["ActTrainingEff"], P["ActAerobicEff"], P["ActAnaerobicEff"]
 ]
+# --- END CHANGE ---
 
 
 # -----------------------------
@@ -163,11 +190,11 @@ SHEET_HEADERS = [
 # -----------------------------
 def _gspread_client():
     file_path = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE"); json_inline = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-    if file_path and os.path.exists(file_path): creds = service_account.Credentials.from_service_account_file(file_path, scopes=["https://www.googleapis.com/auth/spreadsheets"])
+    if file_path and os.path.exists(file_path): creds = service_account.Credentials.from_service_account_file(file_path, scopes=["https.www.googleapis.com/auth/spreadsheets"])
     elif json_inline:
         try: data = json.loads(json_inline)
         except Exception as e: print("ERROR: GOOGLE_SERVICE_ACCOUNT_JSON could not be parsed:", e); sys.exit(1)
-        creds = service_account.Credentials.from_service_account_info(data, scopes=["https://www.googleapis.com/auth/spreadsheets"])
+        creds = service_account.Credentials.from_service_account_info(data, scopes=["https.www.googleapis.com/auth/spreadsheets"])
     else: print("ERROR: Provide GOOGLE_SERVICE_ACCOUNT_FILE or GOOGLE_SERVICE_ACCOUNT_JSON"); sys.exit(1)
     return gspread.authorize(creds)
 
@@ -175,7 +202,7 @@ def _open_or_create_worksheet(gc, spreadsheet_id: str, title: str):
     sh = gc.open_by_key(spreadsheet_id)
     try: ws = sh.worksheet(title)
     except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=title, rows=2000, cols=max(50, len(SHEET_HEADERS)))
+        ws = sh.add_worksheet(title=title, rows=2000, cols=max(70, len(SHEET_HEADERS))) # CHANGED: Increased default cols
         ws.append_row(SHEET_HEADERS, value_input_option="RAW"); return ws
     try: existing = ws.row_values(1)
     except Exception: existing = []
@@ -211,37 +238,49 @@ def _format_score_value(source: dict, key_src: str):
     score_str = "None" if score is None else str(score)
     return f"{score_str}({qual})" if qual is not None else score_str
 
-# CHANGED: Fixed key for overall_score_value
+# CHANGED: Added extraction for feedback and insight keys
 def _sleep_scores_from(data: dict) -> dict:
-    scores = {}; source = data.get("sleepScores") or data.get("dailySleepDTO", {}).get("sleepScores") or {}
+    scores = {}; 
+    daily_dto = data.get("dailySleepDTO") or {}
+    source = data.get("sleepScores") or daily_dto.get("sleepScores") or {}
+    
     def qual(key): v = source.get(key) or {}; return v.get("qualifierKey") or v.get("qualifier") or None
+    
     scores["overall"] = qual("overall"); scores["total_duration"] = qual("totalDuration"); scores["stress"] = qual("stress")
     scores["restlessness"] = qual("restlessness"); scores["awake_count_fmt"] = _format_score_value(source, "awakeCount")
     scores["rem_percentage_fmt"] = _format_score_value(source, "remPercentage"); scores["light_percentage_fmt"] = _format_score_value(source, "lightPercentage")
     scores["deep_percentage_fmt"] = _format_score_value(source, "deepPercentage")
     if scores["light_percentage_fmt"] is None: scores["light_percentage_fmt"] = _format_score_value(source, "light_percentage")
     if scores["deep_percentage_fmt"] is None: scores["deep_percentage_fmt"] = _format_score_value(source, "deep_percentage")
-    # This correctly extracts the numeric score needed for Sleep Score (0-100)
-    scores["overall_score_value"] = try_get(source, ['overall', 'value']) # CHANGED: Key is 'value', not 'score'
+    scores["overall_score_value"] = try_get(source, ['overall', 'value'])
+    
+    # Add new fields
+    scores["sleepScoreFeedback"] = try_get(daily_dto, ['sleepScoreFeedback'], "")
+    scores["sleepScoreInsight"] = try_get(daily_dto, ['sleepScoreInsight'], "")
+    
     return scores
 # --- END CHANGE ---
 
-# Unchanged
+# Unchanged (now returns new fields from _sleep_scores_from)
 def fetch_sleep_for_date(g: Garmin, d: date):
     try:
-        data = g.get_sleep_data(iso_date(d)) or {}
-        daily = data.get("dailySleepDTO") or {}
+        data = g.get_sleep_data(iso_date(d)) or {}; daily = data.get("dailySleepDTO") or {}
         total = sum((daily.get(k) or 0) for k in ["deepSleepSeconds","lightSleepSeconds","remSleepSeconds"])
         start_ms = daily.get("sleepStartTimestampGMT") or data.get("sleepStartTimestampGMT") or daily.get("sleepStartTimestampLocal")
         end_ms = daily.get("sleepEndTimestampGMT") or data.get("sleepEndTimestampGMT") or daily.get("sleepEndTimestampLocal")
         start_local_iso = ms_to_local_iso(start_ms); end_local_iso = ms_to_local_iso(end_ms)
         scores = _sleep_scores_from(data)
+        
+        # CHANGED: Pass new fields through
         return {
             "total_h": round(total / 3600, 2), "light_h": round((daily.get("lightSleepSeconds") or 0) / 3600, 2),
             "deep_h": round((daily.get("deepSleepSeconds") or 0) / 3600, 2), "rem_h":  round((daily.get("remSleepSeconds") or 0) / 3600, 2),
             "awake_h":round((daily.get("awakeSleepSeconds") or 0) / 3600, 2), "resting_hr": data.get("restingHeartRate") or daily.get("restingHeartRate"),
             "start_local": start_local_iso, "end_local": end_local_iso, "scores": scores,
+            "sleepScoreFeedback": try_get(scores, ['sleepScoreFeedback'], ""),
+            "sleepScoreInsight": try_get(scores, ['sleepScoreInsight'], "")
         }
+        # --- END CHANGE ---
     except Exception as e:
         print(f"WARNING: Could not fetch sleep data for {iso_date(d)}: {e}")
         return {}
@@ -350,8 +389,7 @@ def main():
         try: readiness = g.get_training_readiness(d_iso) or {}
         except Exception as e: print(f"WARNING: Could not fetch readiness for {d_iso}: {e}")
 
-        # CHANGED: Renamed variable for clarity
-        training_status_data = {} 
+        training_status_data = {}
         try: training_status_data = g.get_training_status(d_iso) or {}
         except Exception as e: print(f"WARNING: Could not fetch training status for {d_iso}: {e}")
         
@@ -374,21 +412,52 @@ def main():
         # --- END Fetch Data ---
 
         # --- Process complex structures ---
-
-        # CHANGED: New logic for Training Status based on logs
-        training_status_str = ""
+        
+        # CHANGED: Simplified Training Status and added all new fields from Training Status
+        training_status_val = ""
+        load_focus_val = ""
+        vo2_val = ""
+        acute_load_val = ""
+        chronic_load_val = ""
+        acwr_val = ""
+        altitude_val_m = None
+        heat_val = ""
         try:
-            # The data is in: {"mostRecentTrainingStatus": {"latestTrainingStatusData": {"<device_id>": {"trainingStatusFeedbackPhrase": "MAINTAINING_1"}}}}
+            # Data from g.get_training_status()
             ts_data = try_get(training_status_data, ['mostRecentTrainingStatus', 'latestTrainingStatusData'])
+            ts_load_balance = try_get(training_status_data, ['mostRecentTrainingLoadBalance', 'metricsTrainingLoadBalanceDTOMap'])
+            ts_vo2 = try_get(training_status_data, ['mostRecentVO2Max', 'generic'])
+            ts_acclimation = try_get(training_status_data, ['mostRecentVO2Max', 'heatAltitudeAcclimation'])
+            
             if ts_data and isinstance(ts_data, dict):
-                first_device_key = list(ts_data.keys())[0] # Get the dynamic device ID
-                training_status_str = try_get(ts_data, [first_device_key, 'trainingStatusFeedbackPhrase'], "")
+                first_device_key = list(ts_data.keys())[0]
+                training_status_val = try_get(ts_data, [first_device_key, 'trainingStatus'], "") # This is the number, e.g. 4
+                acute_load_val = try_get(ts_data, [first_device_key, 'acuteTrainingLoadDTO', 'dailyTrainingLoadAcute'], "")
+                chronic_load_val = try_get(ts_data, [first_device_key, 'acuteTrainingLoadDTO', 'dailyTrainingLoadChronic'], "")
+                acwr_val = try_get(ts_data, [first_device_key, 'acuteTrainingLoadDTO', 'acwrStatus'], "")
+                
+            if ts_load_balance and isinstance(ts_load_balance, dict):
+                first_device_key_lb = list(ts_load_balance.keys())[0]
+                load_focus_val = try_get(ts_load_balance, [first_device_key_lb, 'trainingBalanceFeedbackPhrase'], "")
+
+            if ts_vo2:
+                vo2_val = try_get(ts_vo2, ['vo2MaxPreciseValue'], "")
+                
+            if ts_acclimation:
+                altitude_val_m = try_get(ts_acclimation, ['altitudeAcclimation'], "")
+                heat_val = try_get(ts_acclimation, ['heatAcclimationPercentage'], "")
+
         except Exception as e:
             print(f"WARNING: Could not parse Training Status for {d_iso}: {e}")
         # --- END CHANGE ---
             
-        # CHANGED: Training Readiness - Get score from the *last* item in the list
+        # CHANGED: Get all new fields from Training Readiness
         readiness_score = try_get(readiness, [-1, 'score'], "")
+        recovery_time = try_get(readiness, [-1, 'recoveryTime'], "")
+        sleep_feedback = try_get(readiness, [-1, 'sleepScoreFactorFeedback'], "")
+        recovery_feedback = try_get(readiness, [-1, 'recoveryTimeFactorFeedback'], "")
+        stress_feedback = try_get(readiness, [-1, 'stressHistoryFactorFeedback'], "")
+        hrv_feedback = try_get(readiness, [-1, 'hrvFactorFeedback'], "")
         # --- END CHANGE ---
 
         # Unchanged Body Battery calculation logic
@@ -403,23 +472,39 @@ def main():
 
 
         # --- Populate props dictionary ---
+        # CHANGED: Added all 17 new fields
         props = {
             P["Date"]: d_iso,
             P["weekday"]: calendar.day_name[d.weekday()],
             P["WeightLb"]: weight_lb,
-            P["TrainingReadiness"]: readiness_score, # Use calculated value
-            P["TrainingStatus"]: training_status_str, # Use calculated value
+            P["TrainingReadiness"]: readiness_score,
+            P["TrainingStatus"]: training_status_val,
+            P["LoadFocus"]: load_focus_val,
             P["RestingHR"]: sleep.get("resting_hr"),
             P["HRV"]: hrv,
-            # Respiration Removed
-            P["SleepScoreOverall"]: (sleep.get("scores", {}) or {}).get("overall_score_value"), # Key was corrected in _sleep_scores_from
-            P["SleepTotalH"]: sleep.get("total_h"),
-            P["SleepLightH"]: sleep.get("light_h"),
-            P["SleepDeepH"]: sleep.get("deep_h"),
-            P["SleepRemH"]: sleep.get("rem_h"),
-            P["SleepAwakeH"]: sleep.get("awake_h"),
-            P["SleepStart"]: sleep.get("start_local"),
-            P["SleepEnd"]: sleep.get("end_local"),
+            P["HRVFactorFeedback"]: hrv_feedback,
+            P["VO2MaxValue"]: vo2_val,
+            P["AveragePulseOx"]: try_get(stats, ['averageSpo2'], ""), # From g.get_stats()
+            P["AcuteLoad"]: acute_load_val,
+            P["ChronicLoad"]: chronic_load_val,
+            P["ACWR_Status"]: acwr_val,
+            P["RecoveryTime"]: recovery_time,
+            P["RecoveryFactorFeedback"]: recovery_feedback,
+            P["TotalCalories"]: try_get(stats, ['totalKilocalories'], ""), # From g.get_stats()
+            P["AcclimationFt"]: meters_to_feet(altitude_val_m), # Converted
+            P["HeatAcclimation"]: heat_val,
+            P["BodyBatteryAvg"]: bb_avg, # Calculated
+            P["BodyBatteryMax"]: bb_max, # From g.get_stats()
+            P["BodyBatteryMin"]: bb_min, # From g.get_stats()
+            P["Steps"]: try_get(stats, ['totalSteps'], ""),
+            P["StepGoal"]: try_get(stats, ['dailyStepGoal'], ""),
+            P["WalkDistanceMi"]: round((try_get(stats, ['totalDistanceMeters'], 0) or 0) / 1609.34, 2),
+            P["SleepScoreOverall"]: (sleep.get("scores", {}) or {}).get("overall_score_value"),
+            P["SleepScoreFeedback"]: sleep.get("sleepScoreFeedback", ""), # From fetch_sleep_for_date
+            P["SleepFactorFeedback"]: sleep_feedback,
+            P["SleepScoreInsight"]: sleep.get("sleepScoreInsight", ""), # From fetch_sleep_for_date
+            P["StressDescription"]: try_get(stats, ['stressQualifier'], ""), # From g.get_stats()
+            P["StressFactorFeedback"]: stress_feedback,
             P["SS_overall"]: (sleep.get("scores", {}) or {}).get("overall"),
             P["SS_total_duration"]: (sleep.get("scores", {}) or {}).get("total_duration"),
             P["SS_stress"]: (sleep.get("scores", {}) or {}).get("stress"),
@@ -428,23 +513,27 @@ def main():
             P["SS_restlessness"]: (sleep.get("scores", {}) or {}).get("restlessness"),
             P["SS_light_percentage"]: (sleep.get("scores", {}) or {}).get("light_percentage_fmt"),
             P["SS_deep_percentage"]: (sleep.get("scores", {}) or {}).get("deep_percentage_fmt"),
-            P["StressAvg"]: try_get(stats, ['averageStressLevel'], ""), # From g.get_stats()
-            P["StressMax"]: try_get(stats, ['maxStressLevel'], ""), # From g.get_stats()
-            P["StressRestH"]: seconds_to_hours(try_get(stats, ['restStressDuration'])), # From g.get_stats()
-            P["StressLowH"]: seconds_to_hours(try_get(stats, ['lowStressDuration'])), # From g.get_stats()
-            P["StressMediumH"]: seconds_to_hours(try_get(stats, ['mediumStressDuration'])), # From g.get_stats()
-            P["StressHighH"]: seconds_to_hours(try_get(stats, ['highStressDuration'])), # From g.get_stats()
+            P["SleepTotalH"]: sleep.get("total_h"),
+            P["SleepLightH"]: sleep.get("light_h"),
+            P["SleepDeepH"]: sleep.get("deep_h"),
+            P["SleepRemH"]: sleep.get("rem_h"),
+            P["SleepAwakeH"]: sleep.get("awake_h"),
+            P["SleepStart"]: sleep.get("start_local"),
+            P["SleepEnd"]: sleep.get("end_local"),
+            P["StressAvg"]: try_get(stats, ['averageStressLevel'], ""),
+            P["StressMax"]: try_get(stats, ['maxStressLevel'], ""),
+            P["StressRestH"]: seconds_to_hours(try_get(stats, ['restStressDuration'])),
+            P["StressLowH"]: seconds_to_hours(try_get(stats, ['lowStressDuration'])),
+            P["StressMediumH"]: seconds_to_hours(try_get(stats, ['mediumStressDuration'])),
+            P["StressHighH"]: seconds_to_hours(try_get(stats, ['highStressDuration'])),
             # Uncategorized Stress Removed
-            P["BodyBatteryAvg"]: bb_avg, # Calculated from g.get_body_battery()
-            P["BodyBatteryMax"]: bb_max, # From g.get_stats()
-            P["BodyBatteryMin"]: bb_min, # From g.get_stats()
-            P["Steps"]: try_get(stats, ['totalSteps'], ""),
-            P["StepGoal"]: try_get(stats, ['dailyStepGoal'], ""), # Corrected key
-            P["WalkDistanceMi"]: round((try_get(stats, ['totalDistanceMeters'], 0) or 0) / 1609.34, 2),
             P["ActivityCount"]: act["count"],
             P["ActivityDistanceMi"]: act["dist_mi"],
             P["ActivityDurationMin"]: act["dur_min"],
             P["ActivityCalories"]: act["cal"],
+            P["IntensityMin"]: intensity_total,
+            P["IntensityMod"]: intensity_mod,
+            P["IntensityVig"]: intensity_vig,
             P["ActivityNames"]: act.get("names", ""),
             P["ActivityTypes"]: act.get("types", ""),
             P["PrimarySport"]: act.get("primary", ""),
@@ -452,9 +541,6 @@ def main():
             P["ActTrainingEff"]: act.get("te", ""),
             P["ActAerobicEff"]: act.get("ae", ""),
             P["ActAnaerobicEff"]: act.get("ane", ""),
-            P["IntensityMin"]: intensity_total, # Calculated
-            P["IntensityMod"]: intensity_mod, # From g.get_stats()
-            P["IntensityVig"]: intensity_vig, # From g.get_stats()
         }
         # --- END Populate props ---
 
