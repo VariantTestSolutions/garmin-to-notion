@@ -1,8 +1,8 @@
 """
-Garmin → Google Sheets Daily Rollup — v4.5.1
+Garmin → Google Sheets Daily Rollup — v4.5.3
 Change: 
-- Corrected Training Status to pull the text string ("trainingStatusFeedbackPhrase") instead of the integer.
-- Added a minutes_to_hours() helper and applied it to Recovery Time.
+- Updated headers for "Recovery Time" and "Heat acclimation".
+- Corrected Training Status extraction to pull the text string ("trainingStatusFeedbackPhrase").
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -32,7 +32,7 @@ def get_local_tz():
     except Exception: return timezone.utc
 
 # -----------------------------
-# Helpers
+# Helpers (Unchanged)
 # -----------------------------
 def iso_date(d: date) -> str: return d.isoformat()
 def today_local() -> date: tz = get_local_tz(); return datetime.now(tz).date()
@@ -42,12 +42,6 @@ def daterange(start: date, end_exclusive: date):
     while d < end_exclusive:
         yield d
         d += timedelta(days=1)
-
-def meters_to_feet(meters):
-    """Converts meters to feet, rounding to 0 decimal places."""
-    if isinstance(meters, (int, float)):
-        return round(meters * 3.28084, 0)
-    return ""
 
 def ms_to_local_iso(ms: int | None) -> str | None:
     if not ms: return None
@@ -75,13 +69,17 @@ def seconds_to_hours(seconds):
     if isinstance(seconds, (int, float)): return round(seconds / 3600.0, 2)
     return ""
 
-# CHANGED: Added minutes_to_hours helper function
 def minutes_to_hours(minutes):
     """Safely converts minutes (int) to hours (float, 2 decimal places)."""
     if isinstance(minutes, (int, float)):
         return round(minutes / 60.0, 2)
     return ""
-# --- END CHANGE ---
+
+def meters_to_feet(meters):
+    """Converts meters to feet, rounding to 0 decimal places."""
+    if isinstance(meters, (int, float)):
+        return round(meters * 3.28084, 0)
+    return ""
 
 def try_get(data, keys, default=""):
     if data is None: return default
@@ -136,15 +134,18 @@ def login_to_garmin():
         except Exception as e2: print(f"ERROR: Full login error: {e2}"); sys.exit(1)
 
 # -----------------------------
-# Column map (Unchanged)
+# Column map
 # -----------------------------
+# CHANGED: Updated headers for Recovery Time and Heat Acclimation
 P = {
     "Date": "Date", "weekday": "weekday", "WeightLb": "Weight (lb)", "TrainingReadiness": "Training Readiness (0-100)",
     "TrainingStatus": "Training Status", "LoadFocus": "Load Focus", "RestingHR": "Resting HR", "HRV": "HRV",
     "HRVFactorFeedback": "HRV Factor Feedback", "VO2MaxValue": "vo2 Max Value", "AveragePulseOx": "Average Pulse Ox",
     "AcuteLoad": "7 Day (Acute) Training Load", "ChronicLoad": "28 Day (Chronic) Training Load", "ACWR_Status": "Acute to Chronic Workload Ratio",
-    "RecoveryTime": "Recovery Time", "RecoveryFactorFeedback": "Recovery Factor Feedback", "TotalCalories": "Total Calories",
-    "AcclimationFt": "Acclimation (ft)", "HeatAcclimation": "Heat acclimation",
+    "RecoveryTime": "Recovery Time (h)", # CHANGED
+    "RecoveryFactorFeedback": "Recovery Factor Feedback", "TotalCalories": "Total Calories",
+    "AcclimationFt": "Acclimation (ft)",
+    "HeatAcclimation": "Heat acclimation (%)", # CHANGED
     "BodyBatteryAvg": "Body Battery Avg", "BodyBatteryMax": "Body Battery Max", "BodyBatteryMin": "Body Battery Min",
     "Steps": "Steps", "StepGoal": "Step Goal", "WalkDistanceMi": "Walk Distance (mi)",
     "SleepScoreOverall": "Sleep Score (0-100)", "SleepScoreFeedback": "Sleep Score Feedback", "SleepFactorFeedback": "Sleep Factor Feedback",
@@ -163,9 +164,10 @@ P = {
     "PrimarySport": "primary_sport", "ActivityTypesUnique": "activity_types_unique", "ActTrainingEff": "Training Effect (list)",
     "ActAerobicEff": "Aerobic Effect (list)", "ActAnaerobicEff": "Anaerobic Effect (list)",
 }
+# --- END CHANGE ---
 
 # -----------------------------
-# SHEET_HEADERS (Unchanged)
+# SHEET_HEADERS (Unchanged, pulls from P)
 # -----------------------------
 SHEET_HEADERS = [
     P["Date"], P["weekday"], P["WeightLb"], P["TrainingReadiness"], P["TrainingStatus"], P["LoadFocus"], P["RestingHR"], P["HRV"],
@@ -407,23 +409,20 @@ def main():
             ts_data = try_get(training_status_data, ['mostRecentTrainingStatus', 'latestTrainingStatusData'])
             if ts_data and isinstance(ts_data, dict):
                 first_device_key = list(ts_data.keys())[0]
-                # Use 'trainingStatus' key which holds the string, not 'trainingStatusFeedbackPhrase'
-                training_status_str = try_get(ts_data, [first_device_key, 'trainingStatus'], "") 
+                # Use 'trainingStatusFeedbackPhrase' key which holds the string
+                training_status_str = try_get(ts_data, [first_device_key, 'trainingStatusFeedbackPhrase'], "") 
         except Exception as e:
             print(f"WARNING: Could not parse Training Status for {d_iso}: {e}")
         # --- END CHANGE ---
             
         readiness_score = try_get(readiness, [-1, 'score'], "")
         
-        # CHANGED: Added extraction for new readiness fields
         recovery_time = try_get(readiness, [-1, 'recoveryTime'], "")
         sleep_feedback = try_get(readiness, [-1, 'sleepScoreFactorFeedback'], "")
         recovery_feedback = try_get(readiness, [-1, 'recoveryTimeFactorFeedback'], "")
         stress_feedback = try_get(readiness, [-1, 'stressHistoryFactorFeedback'], "")
         hrv_feedback = try_get(readiness, [-1, 'hrvFactorFeedback'], "")
-        # --- END CHANGE ---
         
-        # CHANGED: Added extraction for new training status fields
         load_focus_val = ""
         vo2_val = ""
         acute_load_val = ""
@@ -456,7 +455,6 @@ def main():
                 
         except Exception as e:
             print(f"WARNING: Could not parse extra Training Status fields for {d_iso}: {e}")
-        # --- END CHANGE ---
 
         bb_avg = bb_min_calc = bb_max_calc = None
         if bb_list and isinstance(bb_list, list) and len(bb_list) > 0 and 'bodyBatteryValuesArray' in bb_list[0]:
@@ -469,7 +467,6 @@ def main():
 
 
         # --- Populate props dictionary ---
-        # CHANGED: Mapped all new fields
         props = {
             P["Date"]: d_iso,
             P["weekday"]: calendar.day_name[d.weekday()],
