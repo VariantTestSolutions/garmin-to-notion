@@ -1,6 +1,9 @@
 """
-Garmin → Google Sheets Daily Rollup — v4.4.1 (DEBUGGING VERSION)
-Change: Added print statements to show raw API responses for missing fields.
+Garmin → Google Sheets Daily Rollup — v4.4.1
+Change: Corrected all data extraction keys based on raw API logs.
+Consolidated fetching to use g.get_stats() for Stress, Intensity, Steps, and BB Min/Max.
+Fixed Body Battery Avg calculation from g.get_body_battery().
+Removed Respiration Rate and Uncategorized Stress.
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -15,7 +18,12 @@ from zoneinfo import ZoneInfo
 import gspread
 from google.oauth2 import service_account
 
-# --- Timezone config (Unchanged) ---
+# Configure logging (removed)
+
+
+# -----------------------------
+# Timezone config (Unchanged)
+# -----------------------------
 def get_local_tz():
     tzname = os.getenv("LOCAL_TZ") or os.getenv("TIMEZONE") or os.getenv("TZ")
     if tzname:
@@ -24,7 +32,9 @@ def get_local_tz():
     try: return datetime.now().astimezone().tzinfo
     except Exception: return timezone.utc
 
-# --- Helpers (Unchanged) ---
+# -----------------------------
+# Helpers (Unchanged)
+# -----------------------------
 def iso_date(d: date) -> str: return d.isoformat()
 def today_local() -> date: tz = get_local_tz(); return datetime.now(tz).date()
 
@@ -71,7 +81,9 @@ def try_get(data, keys, default=""):
     except (KeyError, TypeError, IndexError): return default
 
 
-# --- Garmin login (CI-safe) (Unchanged) ---
+# -----------------------------
+# Garmin login (CI-safe) (Unchanged)
+# -----------------------------
 def _ensure_dir(path: str): os.makedirs(path, exist_ok=True)
 def _maybe_restore_token_dir_from_tgz(token_dir: str):
     b64 = os.getenv("GARMIN_TOKEN_STORE_TGZ_B64");
@@ -110,10 +122,13 @@ def login_to_garmin():
         try: g.login(); print(f"[garmin] Garmin object login successful on fallback."); return g, token_store
         except Exception as e2: print(f"ERROR: Full login error: {e2}"); sys.exit(1)
 
-# --- Column map (Unchanged) ---
+# -----------------------------
+# Column map (Removed Respiration and Uncategorized Stress)
+# -----------------------------
 P = {
     "Date": "Date", "weekday": "weekday", "WeightLb": "Weight (lb)", "TrainingReadiness": "Training Readiness (0-100)",
     "TrainingStatus": "Training Status", "RestingHR": "Resting HR", "HRV": "HRV",
+    # "RespirationRateAvg": "Respiration Rate Avg (BPM)", # Removed
     "SleepScoreOverall": "Sleep Score (0-100)", "SleepTotalH": "Sleep Total (h)", "SleepLightH": "Sleep Light (h)",
     "SleepDeepH": "Sleep Deep (h)", "SleepRemH": "Sleep REM (h)", "SleepAwakeH": "Sleep Awake (h)", "SleepStart": "Sleep Start (local)",
     "SleepEnd": "Sleep End (local)", "SS_overall": "Sleep Overall (q)", "SS_total_duration": "Sleep Duration (q)",
@@ -121,6 +136,7 @@ P = {
     "SS_restlessness": "Sleep Restlessness (q)", "SS_light_percentage": "Sleep Light % (q)", "SS_deep_percentage": "Sleep Deep % (q)",
     "StressAvg": "Stress Avg", "StressMax": "Stress Max", "StressRestH": "Rest Stress Duration(h)", "StressLowH": "Low Stress Duration (h)",
     "StressMediumH": "Medium Stress Duration (h)", "StressHighH": "High Stress Duration (h)",
+    # "StressUncatH": "Uncategorized Stress Duration (h)", # Removed
     "BodyBatteryAvg": "Body Battery Avg", "BodyBatteryMax": "Body Battery Max", "BodyBatteryMin": "Body Battery Min",
     "Steps": "Steps", "StepGoal": "Step Goal", "WalkDistanceMi": "Walk Distance (mi)", "ActivityCount": "Activities (#)",
     "ActivityDistanceMi": "Activity Distance (mi)", "ActivityDurationMin": "Activity Duration (min)", "ActivityCalories": "Activity Calories",
@@ -130,21 +146,26 @@ P = {
     "IntensityVig": "Intensity Vigorous (min)",
 }
 
-# --- SHEET_HEADERS (Unchanged) ---
+# -----------------------------
+# SHEET_HEADERS (Removed Respiration and Uncategorized Stress)
+# -----------------------------
 SHEET_HEADERS = [
     P["Date"], P["weekday"], P["WeightLb"], P["TrainingReadiness"], P["TrainingStatus"], P["RestingHR"], P["HRV"],
+    # P["RespirationRateAvg"], # Removed
     P["SleepScoreOverall"], P["SleepTotalH"], P["SleepLightH"], P["SleepDeepH"], P["SleepRemH"],
     P["SleepAwakeH"], P["SleepStart"], P["SleepEnd"], P["SS_overall"], P["SS_total_duration"], P["SS_stress"],
     P["SS_awake_count"], P["SS_rem_percentage"], P["SS_restlessness"], P["SS_light_percentage"], P["SS_deep_percentage"],
     P["StressAvg"], P["StressMax"], P["StressRestH"], P["StressLowH"], P["StressMediumH"], P["StressHighH"],
     P["BodyBatteryAvg"], P["BodyBatteryMax"], P["BodyBatteryMin"], P["Steps"], P["StepGoal"], P["WalkDistanceMi"],
     P["ActivityCount"], P["ActivityDistanceMi"], P["ActivityDurationMin"], P["ActivityCalories"], P["ActivityNames"],
-    P["ActivityTypes"], P["PrimarySport"], P["ActivityTypesUnique"], P["ActTrainingEff"], P["ActAerobicEff"], P["ActAnaerobicEff"],
+    P["ActivityTypes"], P["PrimarySport"], P["ActivityTypesUnique"], P["ActTrainingEff"], P["ActAerobicEff"], P["ActAnaerFff"],
     P["IntensityMin"], P["IntensityMod"], P["IntensityVig"]
 ]
 
 
-# --- Google Sheets helpers (Unchanged) ---
+# -----------------------------
+# Google Sheets helpers (Unchanged)
+# -----------------------------
 def _gspread_client():
     file_path = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE"); json_inline = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
     if file_path and os.path.exists(file_path): creds = service_account.Credentials.from_service_account_file(file_path, scopes=["https://www.googleapis.com/auth/spreadsheets"])
@@ -180,7 +201,9 @@ def _read_date_index(ws):
         if v: idx[v] = i
     return idx
 
-# --- Garmin data fetchers ---
+# -----------------------------
+# Garmin data fetchers
+# -----------------------------
 
 # Unchanged
 def _format_score_value(source: dict, key_src: str):
@@ -203,19 +226,14 @@ def _sleep_scores_from(data: dict) -> dict:
     scores["deep_percentage_fmt"] = _format_score_value(source, "deepPercentage")
     if scores["light_percentage_fmt"] is None: scores["light_percentage_fmt"] = _format_score_value(source, "light_percentage")
     if scores["deep_percentage_fmt"] is None: scores["deep_percentage_fmt"] = _format_score_value(source, "deep_percentage")
+    # This correctly extracts the numeric score needed for Sleep Score (0-100)
     scores["overall_score_value"] = try_get(source, ['overall', 'score'])
     return scores
 
 # Unchanged
-def fetch_sleep_for_date(g: Garmin, d: date, first_day: bool): # Added first_day flag
+def fetch_sleep_for_date(g: Garmin, d: date): # Removed first_day flag
     try:
         data = g.get_sleep_data(iso_date(d)) or {}
-        # CHANGED: Added debug print for the first day
-        if first_day:
-            print(f"\n--- DEBUG RAW SLEEP DATA ({iso_date(d)}) ---")
-            print(json.dumps(data, indent=2))
-            print("--- END DEBUG ---\n")
-        # --- END CHANGE ---
         daily = data.get("dailySleepDTO") or {}
         total = sum((daily.get(k) or 0) for k in ["deepSleepSeconds","lightSleepSeconds","remSleepSeconds"])
         start_ms = daily.get("sleepStartTimestampGMT") or data.get("sleepStartTimestampGMT") or daily.get("sleepStartTimestampLocal")
@@ -314,72 +332,37 @@ def main():
 
     updates = 0
     appends = 0
-    first_day_processed = False # CHANGED: Flag for debug prints
-
+    
+    # CHANGED: Removed first_day_processed flag
+    
     for d in daterange(start_d, end_d_inclusive + timedelta(days=1)):
         d_iso = iso_date(d)
         print(f"Processing date: {d_iso}")
-        is_first_day = not first_day_processed # CHANGED: Check if this is the first iteration
 
         # --- Fetch Data using Garmin object 'g' ---
+        
+        # CHANGED: Use g.get_stats() for most daily metrics
         stats = {}
-        try:
-            stats = g.get_stats(d_iso) or {}
-            # CHANGED: Added debug print for the first day
-            if is_first_day:
-                print(f"\n--- DEBUG RAW STATS DATA ({d_iso}) ---")
-                print(json.dumps(stats, indent=2))
-                print("--- END DEBUG ---\n")
-            # --- END CHANGE ---
+        try: stats = g.get_stats(d_iso) or {}
         except Exception as e: print(f"WARNING: Could not fetch stats for {d_iso}: {e}")
 
-        # Pass the flag to the sleep fetch function
-        sleep = fetch_sleep_for_date(g, d, is_first_day) or {} # CHANGED: Pass flag
+        # CHANGED: Use g.get_sleep_data()
+        sleep = fetch_sleep_for_date(g, d) or {} 
 
-        stress = {}
-        try:
-            stress = g.get_stress_data(d_iso) or {}
-            # CHANGED: Added debug print for the first day
-            if is_first_day:
-                print(f"\n--- DEBUG RAW STRESS DATA ({d_iso}) ---")
-                print(json.dumps(stress, indent=2))
-                print("--- END DEBUG ---\n")
-            # --- END CHANGE ---
-        except Exception as e: print(f"WARNING: Could not fetch stress for {d_iso}: {e}")
-
+        # CHANGED: Use g.get_stress_data() - The logs showed this was EMPTY, but g.get_stats() had the data.
+        # We will now pull stress data from the 'stats' object.
+        stress = stats # Use the 'stats' object which contains stress data
+        
         bb_list = []
-        try:
-            bb_list = g.get_body_battery(d_iso) or []
-             # CHANGED: Added debug print for the first day
-            if is_first_day:
-                print(f"\n--- DEBUG RAW BODY BATTERY DATA ({d_iso}) ---")
-                # Print only first few entries if list is long
-                print(json.dumps(bb_list[:5], indent=2))
-                if len(bb_list) > 5: print("...")
-                print("--- END DEBUG ---\n")
-            # --- END CHANGE ---
+        try: bb_list = g.get_body_battery(d_iso) or []
         except Exception as e: print(f"WARNING: Could not fetch body battery for {d_iso}: {e}")
 
         readiness = {}
-        try:
-            readiness = g.get_training_readiness(d_iso) or {}
-             # CHANGED: Added debug print for the first day
-            if is_first_day:
-                print(f"\n--- DEBUG RAW TRAINING READINESS DATA ({d_iso}) ---")
-                print(json.dumps(readiness, indent=2))
-                print("--- END DEBUG ---\n")
-            # --- END CHANGE ---
+        try: readiness = g.get_training_readiness(d_iso) or {}
         except Exception as e: print(f"WARNING: Could not fetch readiness for {d_iso}: {e}")
 
         training_status = {}
-        try:
-            training_status = g.get_training_status(d_iso) or {}
-            # CHANGED: Added debug print for the first day
-            if is_first_day:
-                print(f"\n--- DEBUG RAW TRAINING STATUS DATA ({d_iso}) ---")
-                print(json.dumps(training_status, indent=2))
-                print("--- END DEBUG ---\n")
-            # --- END CHANGE ---
+        try: training_status = g.get_training_status(d_iso) or {}
         except Exception as e: print(f"WARNING: Could not fetch training status for {d_iso}: {e}")
 
         # Removed Respiration fetch
@@ -395,43 +378,82 @@ def main():
         except Exception as e: print(f"WARNING: Could not fetch Weight for {d_iso}: {e}")
 
         # Intensity Minutes now come from get_stats (fetched above)
-        intensity_total = try_get(stats, ['intensityMinutesTotal'], "")
-        intensity_mod = try_get(stats, ['moderateIntensityMinutes'], "")
-        intensity_vig = try_get(stats, ['vigorousIntensityMinutes'], "")
+        intensity_mod = try_get(stats, ['moderateIntensityMinutes'], 0)
+        intensity_vig = try_get(stats, ['vigorousIntensityMinutes'], 0)
+        # Calculate total: (Moderate * 1) + (Vigorous * 2)
+        intensity_total = (intensity_mod or 0) + ((intensity_vig or 0) * 2)
+
 
         act = act_by_date.get(d_iso, {"count":0,"dist_mi":0.0,"dur_min":0.0,"cal":0, "names":"", "types":"", "te":"", "ae":"", "ane":"", "primary":"", "types_unique":""})
         # --- END Fetch Data ---
 
-        # --- Calculate Body Battery Avg/Min/Max (Unchanged) ---
-        bb_avg = bb_min = bb_max = None
-        if bb_list:
-            values = [reading.get('bodyBatteryValue') for reading in bb_list if reading is not None and 'bodyBatteryValue' in reading and reading.get('bodyBatteryValue') is not None]
+        # --- Calculate Body Battery Avg/Min/Max ---
+        bb_avg = bb_min_calc = bb_max_calc = None
+        # Use g.get_body_battery() response for calculating average
+        if bb_list and isinstance(bb_list, list) and len(bb_list) > 0 and 'bodyBatteryValuesArray' in bb_list[0]:
+            values = [pair[1] for pair in bb_list[0]['bodyBatteryValuesArray'] if pair and len(pair) > 1 and isinstance(pair[1], int) and pair[1] >= 0]
             if values:
                 bb_avg = round(sum(values) / len(values))
-                bb_min = min(values)
-                bb_max = max(values)
+        
+        # Use g.get_stats() for Min/Max as it's more direct
+        bb_min = try_get(stats, ['bodyBatteryLowestValue'], "")
+        bb_max = try_get(stats, ['bodyBatteryHighestValue'], "")
 
-        # --- Populate props dictionary (Unchanged from 4.3.0) ---
+
+        # --- Populate props dictionary ---
+        # CHANGED: Corrected all keys based on logs and requests
         props = {
-            P["Date"]: d_iso, P["weekday"]: calendar.day_name[d.weekday()], P["WeightLb"]: weight_lb,
-            P["TrainingReadiness"]: try_get(readiness, ['trainingReadiness'], ""), P["TrainingStatus"]: try_get(training_status, ['trainingStatus'], ""),
-            P["RestingHR"]: sleep.get("resting_hr"), P["HRV"]: hrv,
-            P["SleepScoreOverall"]: (sleep.get("scores", {}) or {}).get("overall_score_value"), P["SleepTotalH"]: sleep.get("total_h"),
-            P["SleepLightH"]: sleep.get("light_h"), P["SleepDeepH"]: sleep.get("deep_h"), P["SleepRemH"]: sleep.get("rem_h"),
-            P["SleepAwakeH"]: sleep.get("awake_h"), P["SleepStart"]: sleep.get("start_local"), P["SleepEnd"]: sleep.get("end_local"),
-            P["SS_overall"]: (sleep.get("scores", {}) or {}).get("overall"), P["SS_total_duration"]: (sleep.get("scores", {}) or {}).get("total_duration"),
-            P["SS_stress"]: (sleep.get("scores", {}) or {}).get("stress"), P["SS_awake_count"]: (sleep.get("scores", {}) or {}).get("awake_count_fmt"),
-            P["SS_rem_percentage"]: (sleep.get("scores", {}) or {}).get("rem_percentage_fmt"), P["SS_restlessness"]: (sleep.get("scores", {}) or {}).get("restlessness"),
-            P["SS_light_percentage"]: (sleep.get("scores", {}) or {}).get("light_percentage_fmt"), P["SS_deep_percentage"]: (sleep.get("scores", {}) or {}).get("deep_percentage_fmt"),
-            P["StressAvg"]: try_get(stress, ['averageStressLevel'], ""), P["StressMax"]: try_get(stress, ['maxStressLevel'], ""),
-            P["StressRestH"]: seconds_to_hours(try_get(stress, ['restStressDurationInSeconds'])), P["StressLowH"]: seconds_to_hours(try_get(stress, ['lowStressDurationInSeconds'])),
-            P["StressMediumH"]: seconds_to_hours(try_get(stress, ['mediumStressDurationInSeconds'])), P["StressHighH"]: seconds_to_hours(try_get(stress, ['highStressDurationInSeconds'])),
-            P["BodyBatteryAvg"]: bb_avg, P["BodyBatteryMax"]: bb_max, P["BodyBatteryMin"]: bb_min, P["Steps"]: try_get(stats, ['totalSteps'], ""),
-            P["StepGoal"]: try_get(stats, ['stepGoal'], ""), P["WalkDistanceMi"]: round((try_get(stats, ['totalDistanceMeters'], 0) or 0) / 1609.34, 2),
-            P["ActivityCount"]: act["count"], P["ActivityDistanceMi"]: act["dist_mi"], P["ActivityDurationMin"]: act["dur_min"], P["ActivityCalories"]: act["cal"],
-            P["ActivityNames"]: act.get("names", ""), P["ActivityTypes"]: act.get("types", ""), P["PrimarySport"]: act.get("primary", ""), P["ActivityTypesUnique"]: act.get("types_unique", ""),
-            P["ActTrainingEff"]: act.get("te", ""), P["ActAerobicEff"]: act.get("ae", ""), P["ActAnaerobicEff"]: act.get("ane", ""),
-            P["IntensityMin"]: intensity_total, P["IntensityMod"]: intensity_mod, P["IntensityVig"]: intensity_vig,
+            P["Date"]: d_iso,
+            P["weekday"]: calendar.day_name[d.weekday()],
+            P["WeightLb"]: weight_lb,
+            P["TrainingReadiness"]: try_get(readiness, [-1, 'score'], ""), # Get last score from list
+            P["TrainingStatus"]: try_get(training_status, ['trainingStatusFeedbackPhrase'], ""), # Get feedback phrase
+            P["RestingHR"]: sleep.get("resting_hr"),
+            P["HRV"]: hrv,
+            # Respiration Removed
+            P["SleepScoreOverall"]: (sleep.get("scores", {}) or {}).get("overall_score_value"),
+            P["SleepTotalH"]: sleep.get("total_h"),
+            P["SleepLightH"]: sleep.get("light_h"),
+            P["SleepDeepH"]: sleep.get("deep_h"),
+            P["SleepRemH"]: sleep.get("rem_h"),
+            P["SleepAwakeH"]: sleep.get("awake_h"),
+            P["SleepStart"]: sleep.get("start_local"),
+            P["SleepEnd"]: sleep.get("end_local"),
+            P["SS_overall"]: (sleep.get("scores", {}) or {}).get("overall"),
+            P["SS_total_duration"]: (sleep.get("scores", {}) or {}).get("total_duration"),
+            P["SS_stress"]: (sleep.get("scores", {}) or {}).get("stress"),
+            P["SS_awake_count"]: (sleep.get("scores", {}) or {}).get("awake_count_fmt"),
+            P["SS_rem_percentage"]: (sleep.get("scores", {}) or {}).get("rem_percentage_fmt"),
+            P["SS_restlessness"]: (sleep.get("scores", {}) or {}).get("restlessness"),
+            P["SS_light_percentage"]: (sleep.get("scores", {}) or {}).get("light_percentage_fmt"),
+            P["SS_deep_percentage"]: (sleep.get("scores", {}) or {}).get("deep_percentage_fmt"),
+            P["StressAvg"]: try_get(stats, ['averageStressLevel'], ""), # From g.get_stats()
+            P["StressMax"]: try_get(stats, ['maxStressLevel'], ""), # From g.get_stats()
+            P["StressRestH"]: seconds_to_hours(try_get(stats, ['restStressDuration'])), # From g.get_stats()
+            P["StressLowH"]: seconds_to_hours(try_get(stats, ['lowStressDuration'])), # From g.get_stats()
+            P["StressMediumH"]: seconds_to_hours(try_get(stats, ['mediumStressDuration'])), # From g.get_stats()
+            P["StressHighH"]: seconds_to_hours(try_get(stats, ['highStressDuration'])), # From g.get_stats()
+            # Uncategorized Stress Removed
+            P["BodyBatteryAvg"]: bb_avg, # Calculated from g.get_body_battery()
+            P["BodyBatteryMax"]: bb_max, # From g.get_stats()
+            P["BodyBatteryMin"]: bb_min, # From g.get_stats()
+            P["Steps"]: try_get(stats, ['totalSteps'], ""),
+            P["StepGoal"]: try_get(stats, ['dailyStepGoal'], ""), # Corrected key
+            P["WalkDistanceMi"]: round((try_get(stats, ['totalDistanceMeters'], 0) or 0) / 1609.34, 2),
+            P["ActivityCount"]: act["count"],
+            P["ActivityDistanceMi"]: act["dist_mi"],
+            P["ActivityDurationMin"]: act["dur_min"],
+            P["ActivityCalories"]: act["cal"],
+            P["ActivityNames"]: act.get("names", ""),
+            P["ActivityTypes"]: act.get("types", ""),
+            P["PrimarySport"]: act.get("primary", ""),
+            P["ActivityTypesUnique"]: act.get("types_unique", ""),
+            P["ActTrainingEff"]: act.get("te", ""),
+            P["ActAerobicEff"]: act.get("ae", ""),
+            P["ActAnaerobicEff"]: act.get("ane", ""),
+            P["IntensityMin"]: intensity_total, # Calculated
+            P["IntensityMod"]: intensity_mod, # From g.get_stats()
+            P["IntensityVig"]: intensity_vig, # From g.get_stats()
         }
         # --- END Populate props ---
 
@@ -446,8 +468,8 @@ def main():
             try: last = len(ws.col_values(1)); date_index[d_iso] = last
             except Exception: pass
             appends += 1
-
-        first_day_processed = True # CHANGED: Set flag after first iteration
+        
+        # CHANGED: Removed first_day_processed flag
         time.sleep(0.1)
 
     print(f"Done. Upserted {updates} updates; {appends} inserts into Google Sheets '{worksheet_title}'.")
