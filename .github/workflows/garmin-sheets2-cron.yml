@@ -50,7 +50,7 @@ jobs:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           GARMIN_TOKEN_STORE: ${{ runner.temp }}/garmin_tokens/.garmin_tokens
-          LOCAL_TZ: America/Los_Angeles
+          LOCAL_TZ: America/New_York
           GOOGLE_SERVICE_ACCOUNT_FILE: ${{ runner.temp }}/sa.json
           GOOGLE_SHEETS_SPREADSHEET_ID: ${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}
           GOOGLE_SHEETS_WORKSHEET_TITLE2: ${{ secrets.GOOGLE_SHEETS_WORKSHEET_TITLE2 }}
