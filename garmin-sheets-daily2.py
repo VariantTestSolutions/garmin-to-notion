@@ -47,8 +47,8 @@ def ms_to_local_iso(ms: int | None) -> str | None:
     if not ms: return None
     try:
         dt_utc = datetime.fromtimestamp(ms / 1000, tz=timezone.utc); tz = get_local_tz()
-        dt_local = dt_utc.astimezone(tz); dt_local = dt_local.replace(second=0, microsecond=0)
-        return dt_local.isoformat()
+        dt_local = dt_utc.astimezone(tz).replace(microsecond=0)
+        return dt_local.strftime("%Y-%m-%d %H:%M:%S")
     except Exception: return None
 
 def to_tokens(value):
@@ -543,9 +543,9 @@ def main():
         if d_iso in date_index:
             row_num = date_index[d_iso];
             rng = f"A{row_num}:{gspread.utils.rowcol_to_a1(row_num, len(SHEET_HEADERS))}"
-            ws.update(range_name=rng, values=[row_values], value_input_option="RAW"); updates += 1
+            ws.update(range_name=rng, values=[row_values], value_input_option="USER_ENTERED"); updates += 1
         else:
-            ws.append_row(row_values, value_input_option="RAW")
+            ws.append_row(row_values, value_input_option="USER_ENTERED")
             try: last = len(ws.col_values(1)); date_index[d_iso] = last
             except Exception: pass
             appends += 1
