@@ -19,7 +19,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install garth garminconnect python-dotenv gspread google-auth
+          # curl_cffi and ua-generator are required to bypass Garmin's 2026 Cloudflare blocks
+          pip install garminconnect>=0.3.1 curl_cffi ua-generator gspread google-auth python-dotenv
 
       # Optional: restore the Garmin token-store directory from a secret.
       - name: Restore Garmin token-store directory
@@ -49,7 +50,7 @@ jobs:
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
-          GARMIN_TOKEN_STORE: ${{ runner.temp }}/garmin_tokens/.garmin_tokens
+          GARMIN_TOKEN_STORE: ${{ runner.temp }}/garmin_tokens/garmin_tokens.json
           LOCAL_TZ: America/New_York
           GOOGLE_SERVICE_ACCOUNT_FILE: ${{ runner.temp }}/sa.json
           GOOGLE_SHEETS_SPREADSHEET_ID: ${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}

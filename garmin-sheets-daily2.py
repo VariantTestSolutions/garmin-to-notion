@@ -10,7 +10,6 @@ from collections import defaultdict, Counter
 import os, sys, time, calendar, re, json, base64, tarfile, io
 from dotenv import load_dotenv
 from garminconnect import Garmin
-import garth
 from zoneinfo import ZoneInfo
 
 # Google Sheets
@@ -108,30 +107,27 @@ def _maybe_restore_token_dir_from_tgz(token_dir: str):
     except Exception as e: print(f"[garmin] Failed to restore token-store from GARMIN_TOKEN_STORE_TGZ_B64: {e}")
 
 def login_to_garmin():
-    garmin_email = os.getenv("GARMIN_EMAIL"); garmin_password = os.getenv("GARMIN_PASSWORD")
-    token_store = os.getenv("GARMIN_TOKEN_STORE", "~/.garmin_tokens"); token_store = os.path.expanduser(token_store).rstrip("/")
-    mfa_code = os.getenv("GARMIN_MFA_CODE")
-    if not garmin_email or not garmin_password: print("ERROR: Missing GARMIN_EMAIL or GARMIN_PASSWORD"); sys.exit(1)
-    if os.path.exists(token_store) and not os.path.isdir(token_store): print(f"ERROR: GARMIN_TOKEN_STORE points to a file: {token_store}. Expected a directory."); sys.exit(1)
-    _maybe_restore_token_dir_from_tgz(token_store)
-    try: garth.resume(token_store); print(f"[garmin] Resumed tokens from {token_store} for garth")
-    except Exception as resume_err:
-        print(f"[garmin] No usable tokens for garth, will login: {resume_err}")
-        if mfa_code:
-            print("[garmin] Performing non-interactive MFA login for garth")
-            client_state = garth.login(garmin_email, garmin_password, return_on_mfa=True)
-            if client_state: garth.resume_login(client_state, mfa_code)
-        else: garth.login(garmin_email, garmin_password)
-        _ensure_dir(token_store); garth.save(token_store); print(f"[garmin] Saved new garth tokens to {token_store}")
-    g = Garmin(garmin_email, garmin_password)
+    """V0.3.1 Native Login - No garth required"""
+    email = os.getenv("GARMIN_EMAIL")
+    password = os.getenv("GARMIN_PASSWORD")
+    token_store = os.getenv("GARMIN_TOKEN_STORE") # This should point to your .json file
+
+    if not email or not password:
+        print("ERROR: Missing GARMIN_EMAIL or GARMIN_PASSWORD")
+        sys.exit(1)
+
+    # Initialize client (0.3.1+ handles Cloudflare/TLS impersonation automatically)
+    client = Garmin(email, password)
+    
     try:
-        g.login(tokenstore=token_store)
-        print(f"[garmin] Garmin object login successful using tokens from {token_store}")
-        return g, token_store
+        # Resume using the token file directly
+        print(f"[garmin] Attempting login with token file: {token_store}")
+        client.login(token_store)
+        print("[garmin] Login successful")
+        return client, token_store
     except Exception as e:
-        print(f"ERROR: Garmin object login error: {e}")
-        try: g.login(); print(f"[garmin] Garmin object login successful on fallback."); return g, token_store
-        except Exception as e2: print(f"ERROR: Full login error: {e2}"); sys.exit(1)
+        print(f"ERROR: Garmin login failed. Your session may have expired. Error: {e}")
+        sys.exit(1)
 
 # -----------------------------
 # Column map
@@ -316,18 +312,6 @@ def aggregate_activities_by_date(activities):
         v["ae"] = " ".join(v["ae"]); v["ane"] = " ".join(v["ane"])
     return by_date
 
-def map_hrv_last_n(n_days=50):
-    out = {}
-    try:
-        rows = garth.DailyHRV.list(period=n_days) or []
-        for r in rows:
-            d = r.calendar_date.isoformat();
-            out[d] = getattr(r, "last_night_avg", None) or getattr(r, "weekly_avg", None)
-    except Exception as e:
-        print(f"WARNING: Could not fetch HRV map: {e}")
-    return out
-
-
 # -----------------------------
 # Main
 # -----------------------------
@@ -351,7 +335,6 @@ def main():
     date_index = _read_date_index(ws)
 
     # Pre-fetch bulk data
-    hrv_map = map_hrv_last_n(window_days)
     activities = fetch_activities_bulk(g, start_d)
     act_by_date = aggregate_activities_by_date(activities)
 
@@ -385,14 +368,22 @@ def main():
         
         # Removed Respiration fetch
 
-        hrv = hrv_map.get(d_iso)
+        hrv = try_get(readiness, [-1, 'hrvValue'], None)
+        if hrv is None:
+            try:
+                hrv_data = g.get_hrv_data(d_iso)
+                hrv = try_get(hrv_data, ['hrvSummary', 'lastNightAvg'], None)
+            except: pass
 
         weight_lb = None
         try:
-            w = garth.WeightData.get(d_iso)
-            if w: grams = getattr(w, "weight", None);
-            if grams is not None: weight_lb = round((grams / 1000) * 2.20462, 2)
-        except Exception as e: print(f"WARNING: Could not fetch Weight for {d_iso}: {e}")
+            weight_data = g.get_body_composition(d_iso)
+            if weight_data and 'totalWeight' in weight_data:
+                # Library usually returns grams; check if it needs conversion
+                grams = weight_data['totalWeight']
+                weight_lb = round((grams / 1000) * 2.20462, 2)
+        except Exception as e:
+            print(f"WARNING: Could not fetch Weight for {d_iso}: {e}")
 
         intensity_mod = try_get(stats, ['moderateIntensityMinutes'], 0)
         intensity_vig = try_get(stats, ['vigorousIntensityMinutes'], 0)
